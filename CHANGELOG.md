@@ -1,6 +1,6 @@
 # geofeed-tools Changelog
 
-## TBD - 0.1.2
+## 2026-05-26 - 0.1.2
 
 - Improve query cache handling
 - Add `doctor` API and CLI support to discover geofeeds via RDAP, fetch the published geofeed, and return structured lookup metadata with matches
