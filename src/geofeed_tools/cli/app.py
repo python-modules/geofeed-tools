@@ -7,15 +7,34 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 
-from tabulate import tabulate
+_MISSING_CLI_DEPS: list[str] = []
+for _dep in ("typer", "structlog", "tabulate"):
+    try:
+        __import__(_dep)
+    except ImportError:
+        _MISSING_CLI_DEPS.append(_dep)
 
-from geofeed_tools import GeoFeed, GeoFeedDiscoveryError
-from geofeed_tools.doctor import render_doctor_text
-from geofeed_tools.io_utils import doctor_to_json, report_to_json
-from geofeed_tools.logging import configure_cli_structlog
-from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport
-from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
-from geofeed_tools.validate import render_validation_text
+if _MISSING_CLI_DEPS:
+    print(
+        "geofeed-tools CLI requires optional dependencies that are not installed.\n"
+        f"  Missing: {', '.join(_MISSING_CLI_DEPS)}\n"
+        "\n"
+        "Install the CLI extras with:\n"
+        "  pip install 'geofeed-tools[cli]'\n"
+        "  uv pip install 'geofeed-tools[cli]'",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+from tabulate import tabulate  # noqa: E402
+
+from geofeed_tools import GeoFeed, GeoFeedDiscoveryError  # noqa: E402
+from geofeed_tools.doctor import render_doctor_text  # noqa: E402
+from geofeed_tools.io_utils import doctor_to_json, report_to_json  # noqa: E402
+from geofeed_tools.logging import configure_cli_structlog  # noqa: E402
+from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport  # noqa: E402
+from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD  # noqa: E402
+from geofeed_tools.validate import render_validation_text  # noqa: E402
 
 JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
