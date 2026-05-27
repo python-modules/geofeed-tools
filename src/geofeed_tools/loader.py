@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import urllib.error
 import urllib.request
 from importlib.metadata import version
@@ -11,6 +12,7 @@ from .logging import TRACE_LEVEL, logger
 USER_AGENT = f"geofeed-tools/{version('geofeed-tools')}"
 URL_SCHEMES = ("http://", "https://")
 FETCH_TIMEOUT = 30
+ASYNC_HTTP_ERROR = "Async HTTP support requires httpx. Install with: uv pip install 'geofeed-tools[async]'"
 
 
 class FetchError(Exception):
@@ -39,9 +41,23 @@ def load_input(source: str) -> tuple[bytes, str | None]:
         return _fetch_urllib(source)
 
     logger.info("reading file: %s", source)
-    with open(source, "rb") as handle:
-        data = handle.read()
+    data = _read_file_bytes(source)
     return data, None
+
+
+async def load_input_async(source: str) -> tuple[bytes, str | None]:
+    """Load raw bytes asynchronously from a file path or HTTP(S) URL."""
+    if is_url(source):
+        return await _fetch_httpx(source)
+
+    logger.info("reading file: %s", source)
+    data = await asyncio.to_thread(_read_file_bytes, source)
+    return data, None
+
+
+def _read_file_bytes(source: str) -> bytes:
+    with open(source, "rb") as handle:
+        return handle.read()
 
 
 def _fetch_urllib(source: str) -> tuple[bytes, str | None]:
@@ -82,6 +98,54 @@ def _fetch_urllib(source: str) -> tuple[bytes, str | None]:
             source,
             status_code=None,
             reason=str(exc.reason),
+        ) from exc
+
+
+async def _fetch_httpx(source: str) -> tuple[bytes, str | None]:
+    """Fetch content asynchronously via httpx."""
+    try:
+        import httpx
+    except ImportError as exc:
+        raise RuntimeError(ASYNC_HTTP_ERROR) from exc
+
+    logger.info("fetching %s via httpx", source)
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/csv, */*"}
+    logger.log(
+        TRACE_LEVEL,
+        "prepared httpx request method=%s url=%s headers=%s timeout=%s",
+        "GET",
+        source,
+        headers,
+        FETCH_TIMEOUT,
+    )
+    try:
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=FETCH_TIMEOUT,
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(source)
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type")
+            logger.log(
+                TRACE_LEVEL,
+                "httpx response status=%s reason=%s content_type=%s",
+                response.status_code,
+                response.reason_phrase,
+                content_type,
+            )
+            return response.content, content_type
+    except httpx.HTTPStatusError as exc:
+        raise FetchError(
+            source,
+            status_code=exc.response.status_code,
+            reason=exc.response.reason_phrase,
+        ) from exc
+    except httpx.RequestError as exc:
+        raise FetchError(
+            source,
+            status_code=None,
+            reason=str(exc),
         ) from exc
 
 

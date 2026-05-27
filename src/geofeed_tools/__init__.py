@@ -1,5 +1,6 @@
 """Public package exports for geofeed_tools."""
 
+from .async_core import AsyncGeoFeed
 from .core import GeoFeed
 from .models import (
     GeoFeedInfo,
@@ -10,6 +11,7 @@ from .models import (
 )
 
 __all__ = [
+    "AsyncGeoFeed",
     "GeoFeed",
     "GeoFeedInfo",
     "GeofeedRecord",

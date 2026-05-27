@@ -4,6 +4,7 @@
 
 - Add GitHub actions example and instructions to validate geofeed using CLI hook command
 - Add `geofeed-tools dump --format {json,csv,table}` for JSON, geofeed CSV, and tabulated output modes
+- Add native library async support with `AsyncGeoFeed` and async URL loading via the `async` extra
 
 ## 2026-05-26 - 0.1.0
 

@@ -16,6 +16,7 @@
       - [`normalize()`](#normalize)
       - [`query()`](#query)
       - [`info()`](#info)
+    - [`AsyncGeoFeed`](#asyncgeofeed)
     - [Public Data Models](#public-data-models)
       - [`GeofeedRecord`](#geofeedrecord)
       - [`ValidationIssue`](#validationissue)
@@ -62,6 +63,12 @@ To install the full library including the CLI:
 uv pip install 'geofeed-tools[cli]'
 ```
 
+To install the library with async HTTP support for `AsyncGeoFeed` URL loading:
+
+```bash
+uv pip install 'geofeed-tools[async]'
+```
+
 Install development dependencies:
 
 ```bash
@@ -99,12 +106,29 @@ all_matches = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True
 summary = geofeed.info()
 ```
 
+Async quick start:
+
+```python
+from geofeed_tools import AsyncGeoFeed
+
+geofeed = AsyncGeoFeed("https://api.cloudflare.com/local-ip-ranges.csv")
+
+# Methods mirror GeoFeed, but are awaitable
+records = await geofeed.parse()
+report = await geofeed.validate(check_aggregation=True)
+summary = await geofeed.info()
+
+# Or eagerly load first with the async factory
+preloaded = await AsyncGeoFeed.from_source("https://api.cloudflare.com/local-ip-ranges.csv")
+```
+
 ### Public Imports
 
 The top-level package exports the main API object plus the public dataclasses:
 
 ```python
 from geofeed_tools import (
+  AsyncGeoFeed,
 	GeoFeed,
 	GeoFeedInfo,
 	GeofeedRecord,
@@ -113,6 +137,38 @@ from geofeed_tools import (
 	ValidationReport,
 )
 ```
+
+### `AsyncGeoFeed`
+
+`AsyncGeoFeed` is the native async counterpart to `GeoFeed` for library users who want to integrate geofeed processing into an asyncio application.
+
+Constructor:
+
+```python
+AsyncGeoFeed(source: str)
+```
+
+Async factory for eager loading:
+
+```python
+await AsyncGeoFeed.from_source(source: str) -> AsyncGeoFeed
+```
+
+Available async methods:
+
+- `await reload() -> None`
+- `await parse(...) -> list[GeofeedRecord] | str`
+- `await validate(...) -> ValidationReport | str`
+- `await normalize(...) -> list[GeofeedRecord] | str`
+- `await query(...) -> QueryResult | str`
+- `await info(...) -> GeoFeedInfo | str`
+
+Behavior notes:
+
+- `AsyncGeoFeed` accepts the same flags and output modes as `GeoFeed` for `parse()`, `validate()`, `normalize()`, `query()`, and `info()`.
+- Local file loading is performed asynchronously via thread offloading.
+- Remote URL loading uses async HTTP and requires the `geofeed-tools[async]` extra.
+- Parsing, validation, normalization, querying, and info generation run off the event loop in worker threads so library consumers can use the API without blocking the loop on large feeds.
 
 ### `GeoFeed`
 
