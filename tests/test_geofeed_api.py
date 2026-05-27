@@ -62,3 +62,31 @@ def test_parse_with_normalize_option() -> None:
     assert isinstance(normalized, list)
     assert len(parsed) == 3
     assert len(normalized) == 2
+
+
+def test_query_include_longer_prefers_most_specific_when_not_returning_all() -> None:
+    """Single-result query path should return the most specific matching prefix."""
+    geofeed = GeoFeed(fixture_path("valid_geofeed.csv"))
+
+    result = geofeed.query(
+        "192.0.2.0/24",
+        include_longer=True,
+        return_all=False,
+        output="objects",
+    )
+
+    assert not isinstance(result, str)
+    assert len(result.matches) == 1
+    assert result.matches[0].prefix == "192.0.2.128/25"
+
+
+def test_validate_includes_raw_line_context() -> None:
+    """Validation line-scoped issues should include source raw line context."""
+    geofeed = GeoFeed(fixture_path("invalid_geofeed.csv"))
+    report = geofeed.validate(output="objects")
+
+    assert not isinstance(report, str)
+    assert any(
+        issue.code == "invalid-prefix" and issue.raw_line == "badprefix,US,US-CA,City,10000"
+        for issue in report.issues
+    )

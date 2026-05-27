@@ -88,8 +88,26 @@ def find_matches(
     query_network: Network,
     *,
     include_longer: bool = False,
+    return_all: bool = True,
 ) -> list[GeofeedRecord]:
     """Find matching geofeed records for a parsed query network."""
+    if not return_all:
+        best_match: GeofeedRecord | None = None
+        best_prefixlen = -1
+
+        for network, record in records:
+            if _network_version(network) != _network_version(query_network):
+                continue
+            if _network_subnet_of(query_network, network) or (
+                include_longer and _network_subnet_of(network, query_network)
+            ):
+                prefixlen = network.prefixlen
+                if prefixlen > best_prefixlen:
+                    best_prefixlen = prefixlen
+                    best_match = record
+
+        return [best_match] if best_match is not None else []
+
     matches: list[tuple[Network, GeofeedRecord]] = []
 
     for network, record in records:
@@ -138,10 +156,9 @@ def query_text(
         records,
         query_network,
         include_longer=include_longer,
+        return_all=return_all,
     )
     original_match_count = len(matches)
-    if not return_all:
-        matches = matches[:1]
     logger.debug(
         "Resolved geofeed query: query=%s indexed_records=%d matches=%d returned=%d include_longer=%s return_all=%s",
         query,

@@ -14,7 +14,7 @@ from .logging import TRACE_LEVEL, logger
 from .models import ValidationIssue, ValidationReport
 from .parsing import (
     MAX_FIELDS,
-    iter_data_lines,
+    iter_data_lines_with_raw,
     normalize_fields,
     parse_record,
 )
@@ -215,7 +215,9 @@ def validate_bytes(
         return _report_from_issues(source, 0, issues)
 
     state = _ValidationState()
-    for lineno, data in iter_data_lines(text):
+    raw_lines_by_number: dict[int, str] = {}
+    for lineno, raw_line, data in iter_data_lines_with_raw(text):
+        raw_lines_by_number[lineno] = raw_line
         issue_start = len(issues)
         _validate_data_line(
             lineno,
@@ -232,12 +234,7 @@ def validate_bytes(
         issues.extend(find_aggregations(state.records_for_aggregation))
         _trace_new_issues(issues, issue_start)
 
-    if text is not None:
-        line_map = dict(enumerate(text.splitlines(), start=1))
-        issues = [
-            dataclasses.replace(issue, raw_line=line_map.get(issue.line)) if issue.line is not None else issue
-            for issue in issues
-        ]
+    issues = _attach_raw_lines(issues, raw_lines_by_number)
 
     report = _report_from_issues(source, state.record_count, issues)
     logger.debug(
@@ -558,6 +555,19 @@ def _report_from_issues(
         valid=errors == 0,
         issues=tuple(issues),
     )
+
+
+def _attach_raw_lines(
+    issues: list[ValidationIssue],
+    raw_lines_by_number: dict[int, str],
+) -> list[ValidationIssue]:
+    """Attach source raw lines to line-scoped issues when available."""
+    return [
+        dataclasses.replace(issue, raw_line=raw_lines_by_number.get(issue.line))
+        if issue.line is not None and issue.raw_line is None
+        else issue
+        for issue in issues
+    ]
 
 
 def render_validation_text(report: ValidationReport) -> str:
