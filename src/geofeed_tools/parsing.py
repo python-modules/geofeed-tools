@@ -34,10 +34,16 @@ def parse_record(data_line: str) -> list[str]:
 
 def iter_data_lines(text: str) -> Iterable[tuple[int, str]]:
     """Yield line number and non-empty data content for feed lines."""
+    for lineno, _raw_line, data in iter_data_lines_with_raw(text):
+        yield lineno, data
+
+
+def iter_data_lines_with_raw(text: str) -> Iterable[tuple[int, str, str]]:
+    """Yield line number, original raw line, and parsed data for feed lines."""
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
         data = split_comment(raw_line).strip()
         if data:
-            yield lineno, data
+            yield lineno, raw_line, data
 
 
 def normalize_fields(fields: list[str]) -> list[str]:

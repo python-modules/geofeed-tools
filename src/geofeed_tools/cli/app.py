@@ -9,8 +9,10 @@ from pathlib import Path
 from tabulate import tabulate
 
 from geofeed_tools import GeoFeed
+from geofeed_tools.io_utils import report_to_json
 from geofeed_tools.logging import configure_cli_structlog
 from geofeed_tools.models import GeofeedRecord, ValidationReport
+from geofeed_tools.validate import render_validation_text
 
 JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
@@ -193,13 +195,13 @@ def _register_validate_command(app, typer) -> None:
             "check_aggregation": check_aggregation,
         }
 
-        output = "json" if json_output else "text"
-        report = geofeed.validate(output=output, **validate_options)
-        print(report)
-        assert isinstance(report, str)
-        report_obj = geofeed.validate(output="objects", **validate_options)
-        assert isinstance(report_obj, ValidationReport)
-        if report_obj.errors > 0 or (strict and report_obj.warnings > 0):
+        report = geofeed.validate(output="objects", **validate_options)
+        assert isinstance(report, ValidationReport)
+
+        payload = report_to_json(report) if json_output else render_validation_text(report)
+        print(payload)
+
+        if report.errors > 0 or (strict and report.warnings > 0):
             raise typer.Exit(code=1)
 
 

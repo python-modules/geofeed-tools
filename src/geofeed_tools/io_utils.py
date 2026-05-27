@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Iterable
 from io import StringIO
 
 from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 
 
 def records_to_csv(
-    records: list[GeofeedRecord],
+    records: Iterable[GeofeedRecord],
     *,
     include_validation: bool = False,
 ) -> str:

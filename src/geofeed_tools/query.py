@@ -7,7 +7,7 @@ import ipaddress
 
 from .logging import TRACE_LEVEL, logger
 from .models import GeofeedRecord, QueryResult
-from .parsing import iter_data_lines, normalize_fields, parse_record
+from .parsing import iter_data_lines_with_raw, normalize_fields, parse_record
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 
@@ -22,12 +22,11 @@ def load_query_records(
 ) -> list[tuple[Network, GeofeedRecord]]:
     """Load queryable records and keep last occurrence per prefix."""
     last_by_prefix: dict[Network, GeofeedRecord] = {}
-    line_map = dict(enumerate(text.splitlines(), start=1))
     skipped_csv_errors = 0
     skipped_missing_prefix = 0
     skipped_invalid_prefix = 0
 
-    for lineno, data in iter_data_lines(text):
+    for lineno, raw_line, data in iter_data_lines_with_raw(text):
         try:
             fields = parse_record(data)
         except csv.Error as exc:
@@ -70,7 +69,7 @@ def load_query_records(
             city=city,
             postal_code=postal,
             line=lineno,
-            raw_line=line_map.get(lineno),
+            raw_line=raw_line,
         )
 
     records = [(network, record) for network, record in last_by_prefix.items()]

@@ -297,7 +297,7 @@ def _query_loaded(
             len(payload),
         )
         return payload
-    payload = records_to_csv(list(result.matches), include_validation=False)
+    payload = records_to_csv(result.matches, include_validation=False)
     logger.debug(
         "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
         source,
