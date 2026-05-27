@@ -5,13 +5,10 @@ from __future__ import annotations
 import asyncio
 import urllib.error
 import urllib.request
-from importlib.metadata import version
 
-from .logging import TRACE_LEVEL, logger
+from .config import FETCH_TIMEOUT, TRACE_LEVEL, URL_SCHEMES, USER_AGENT
+from .logging import logger
 
-USER_AGENT = f"geofeed-tools/{version('geofeed-tools')}"
-URL_SCHEMES = ("http://", "https://")
-FETCH_TIMEOUT = 30
 ASYNC_HTTP_ERROR = "Async HTTP support requires httpx. Install with: uv pip install 'geofeed-tools[async]'"
 
 

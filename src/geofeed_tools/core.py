@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ._query_cache import QueryIndex, QueryIndexCache
+from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .doctor import doctor_query, render_doctor_text
 from .info import build_info
 from .io_utils import (
@@ -14,7 +15,7 @@ from .io_utils import (
     report_to_json,
 )
 from .loader import FetchError, decode_text, load_input, source_kind
-from .logging import TRACE_LEVEL, logger
+from .logging import logger
 from .models import DoctorResult, GeoFeedDiscoveryError, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text, parse_text_with_networks
@@ -391,7 +392,7 @@ def _doctor(
     *,
     return_all: bool = False,
     include_longer: bool = False,
-    rdap_method: str = "rdap.org",
+    rdap_method: str = DEFAULT_RDAP_METHOD,
     output: str = "objects",
 ) -> DoctorResult | str:
     logger.info("Running doctor command for query=%s", query)
@@ -439,7 +440,7 @@ def _lookup(
     *,
     return_all: bool = False,
     include_longer: bool = False,
-    rdap_method: str = "rdap.org",
+    rdap_method: str = DEFAULT_RDAP_METHOD,
     output: str = "objects",
 ) -> QueryResult | str:
     logger.info("Running lookup command for query=%s", query)
@@ -645,7 +646,7 @@ class GeoFeed(_GeoFeedBase):
         *,
         return_all: bool = False,
         include_longer: bool = False,
-        rdap_method: str = "rdap.org",
+        rdap_method: str = DEFAULT_RDAP_METHOD,
         output: str = "objects",
     ) -> DoctorResult | str:
         """Discover and query a published geofeed for an IP or prefix via RDAP."""
@@ -663,7 +664,7 @@ class GeoFeed(_GeoFeedBase):
         *,
         return_all: bool = False,
         include_longer: bool = False,
-        rdap_method: str = "rdap.org",
+        rdap_method: str = DEFAULT_RDAP_METHOD,
         output: str = "objects",
     ) -> QueryResult | str:
         """Discover a geofeed via RDAP and return query results for an IP or prefix.

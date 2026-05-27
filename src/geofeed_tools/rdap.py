@@ -12,6 +12,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
+from .config import (
+    IANA_BOOTSTRAP_METHOD,
+    IANA_BOOTSTRAP_URLS,
+    JSON_ACCEPT,
+    MAX_RDAP_DEPTH,
+    RDAP_ACCEPT,
+    RDAP_LOOKUP_METHODS,
+    RDAP_ORG_METHOD,
+    RDAP_ORG_QUERY_TEMPLATE,
+    RDAP_ORG_ROOT_URL,
+)
 from .loader import ASYNC_HTTP_ERROR, FETCH_TIMEOUT, USER_AGENT, FetchError
 from .logging import logger
 from .models import DoctorLookup
@@ -20,18 +31,6 @@ from .query import Network, parse_query
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 BootstrapIndex = list[tuple[Network, tuple[str, ...]]]
 
-RDAP_ACCEPT = "application/rdap+json, application/json, */*"
-JSON_ACCEPT = "application/json, */*"
-RDAP_ORG_METHOD = "rdap.org"
-IANA_BOOTSTRAP_METHOD = "iana-bootstrap"
-RDAP_LOOKUP_METHODS = (RDAP_ORG_METHOD, IANA_BOOTSTRAP_METHOD)
-RDAP_ORG_ROOT_URL = "https://rdap.org/"
-RDAP_ORG_QUERY_TEMPLATE = "https://rdap.org/ip/{}"
-IANA_BOOTSTRAP_URLS = {
-    4: "https://data.iana.org/rdap/ipv4.json",
-    6: "https://data.iana.org/rdap/ipv6.json",
-}
-MAX_RDAP_DEPTH = 8
 LINK_GEOFEED_SOURCE = "rdap link rel=geofeed"
 GEOFEED_URL_RE = re.compile(
     r"geofeed(?:\s*:)?\s*(https?://\S+)",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .core import (
     _build_lookup_result,
     _GeoFeedBase,
@@ -17,7 +18,7 @@ from .core import (
 )
 from .doctor import doctor_query_async
 from .loader import FetchError, load_input_async, source_kind
-from .logging import TRACE_LEVEL, logger
+from .logging import logger
 from .models import (
     DoctorResult,
     GeoFeedDiscoveryError,
@@ -167,7 +168,7 @@ class AsyncGeoFeed(_GeoFeedBase):
         *,
         return_all: bool = False,
         include_longer: bool = False,
-        rdap_method: str = "rdap.org",
+        rdap_method: str = DEFAULT_RDAP_METHOD,
         output: str = "objects",
     ) -> DoctorResult | str:
         """Discover and query a published geofeed asynchronously via RDAP."""
@@ -185,7 +186,7 @@ class AsyncGeoFeed(_GeoFeedBase):
         *,
         return_all: bool = False,
         include_longer: bool = False,
-        rdap_method: str = "rdap.org",
+        rdap_method: str = DEFAULT_RDAP_METHOD,
         output: str = "objects",
     ) -> QueryResult | str:
         """Discover a geofeed via RDAP and return query results for an IP or prefix.

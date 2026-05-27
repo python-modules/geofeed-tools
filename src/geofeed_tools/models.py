@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from .config import DEFAULT_RDAP_METHOD
+
 
 @dataclass(frozen=True)
 class GeofeedRecord:
@@ -108,7 +110,7 @@ class DoctorLookup:
     lookup_strategy: str
     rdap_query: str
     bootstrap_url: str
-    rdap_method: str = "rdap.org"
+    rdap_method: str = DEFAULT_RDAP_METHOD
     bootstrap_source_url: str | None = None
     resolved_urls: tuple[str, ...] = ()
     referring_handle: str | None = None

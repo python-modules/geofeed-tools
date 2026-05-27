@@ -9,6 +9,7 @@ from functools import lru_cache
 
 import pycountry
 
+from .config import LRU_COUNTRY_CACHE_SIZE, LRU_SUBDIVISION_CACHE_SIZE
 from .loader import is_url
 from .logging import TRACE_LEVEL, logger
 from .models import ValidationIssue, ValidationReport
@@ -195,13 +196,13 @@ def _collapse_same_version(unique: list[Network]) -> list[Network]:
     return list(ipaddress.collapse_addresses(unique))
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=LRU_COUNTRY_CACHE_SIZE)
 def _lookup_country(alpha2: str):
     """Return cached ISO 3166-1 country lookup results."""
     return pycountry.countries.get(alpha_2=alpha2)
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=LRU_SUBDIVISION_CACHE_SIZE)
 def _lookup_subdivision(code: str):
     """Return cached ISO 3166-2 subdivision lookup results."""
     return pycountry.subdivisions.get(code=code)
