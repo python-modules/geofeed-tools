@@ -8,6 +8,7 @@
   - [Python API](#python-api)
     - [Quick Start](#quick-start)
     - [Public Imports](#public-imports)
+    - [`AsyncGeoFeed`](#asyncgeofeed)
     - [`GeoFeed`](#geofeed)
       - [Constructor](#constructor)
       - [`reload()`](#reload)
@@ -16,7 +17,6 @@
       - [`normalize()`](#normalize)
       - [`query()`](#query)
       - [`info()`](#info)
-    - [`AsyncGeoFeed`](#asyncgeofeed)
     - [Public Data Models](#public-data-models)
       - [`GeofeedRecord`](#geofeedrecord)
       - [`ValidationIssue`](#validationissue)
@@ -728,14 +728,40 @@ Output and exit notes:
 
 ### GitHub Actions Integration
 
-The `hook` command is designed to work well as a CI quality gate. This repository includes a copy-paste workflow template at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml) for downstream repositories that want to validate a tracked geofeed file in GitHub Actions.
+The `hook` command is designed to work well as a CI quality gate. This repository publishes a reusable workflow at [.github/workflows/geofeed-validation.yml](.github/workflows/geofeed-validation.yml) and also includes a caller example at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml).
 
 #### How To Use It In Another Repository
 
-1. Copy [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml) into your repository as `.github/workflows/geofeed-validation.yml`.
-2. Replace `path/to/geofeed.csv` in both `env.GEOFEED_PATH` and the `paths` filters with the actual tracked geofeed file path in your repository.
-3. Commit the workflow file and push it to GitHub.
-4. Optionally mark the workflow as a required status check in your branch protection rules so pull requests cannot merge when the geofeed validation fails.
+Create a small workflow in your repository that calls the shared workflow with `uses`:
+
+```yaml
+name: Validate geofeed
+
+on:
+  pull_request:
+    paths:
+      - "path/to/geofeed.csv"
+  push:
+    branches:
+      - main
+    paths:
+      - "path/to/geofeed.csv"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  geofeed-validation:
+    uses: python-modules/geofeed-tools/.github/workflows/geofeed-validation.yml@main
+    with:
+      geofeed_path: path/to/geofeed.csv
+      strict: false
+```
+
+Replace `path/to/geofeed.csv` with the tracked geofeed file path in your repository.
+
+The above example disables strict mode validation - warnings are logged but permitted. To require strict mode validation set `strict` to `true`.
 
 ## Testing
 

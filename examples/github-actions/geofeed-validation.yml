@@ -2,40 +2,23 @@ name: Validate geofeed
 
 on:
   pull_request:
+    # Path filters are evaluated in the caller workflow, so they cannot come
+    # from workflow_call inputs on the shared workflow.
     paths:
       - "path/to/geofeed.csv"
-      - ".github/workflows/geofeed-validation.yml"
   push:
     branches:
       - main
     paths:
       - "path/to/geofeed.csv"
-      - ".github/workflows/geofeed-validation.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  GEOFEED_PATH: path/to/geofeed.csv
-
 jobs:
   geofeed-validation:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install geofeed-tools CLI
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "geofeed-tools[cli]"
-
-      - name: Validate geofeed
-        run: geofeed-tools hook "$GEOFEED_PATH"
+    uses: python-modules/geofeed-tools/.github/workflows/geofeed-validation.yml@main
+    with:
+      geofeed_path: path/to/geofeed.csv
+      strict: true
