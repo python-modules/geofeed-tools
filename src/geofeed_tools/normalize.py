@@ -217,13 +217,7 @@ def _collapse_same_version(networks: list[Network]) -> list[Network]:
     """Collapse networks that are known to share the same IP version."""
     if not networks:
         return []
-
-    if isinstance(networks[0], ipaddress.IPv4Network):
-        ipv4_nets = [net for net in networks if isinstance(net, ipaddress.IPv4Network)]
-        return list(ipaddress.collapse_addresses(ipv4_nets))
-
-    ipv6_nets = [net for net in networks if isinstance(net, ipaddress.IPv6Network)]
-    return list(ipaddress.collapse_addresses(ipv6_nets))
+    return list(ipaddress.collapse_addresses(networks))
 
 
 def _dedupe(

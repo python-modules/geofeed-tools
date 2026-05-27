@@ -6,6 +6,7 @@ import collections
 import csv
 import dataclasses
 import ipaddress
+from functools import lru_cache
 
 import pycountry
 
@@ -52,8 +53,7 @@ def find_aggregations(
     """Return warnings for prefixes that can be merged safely."""
     issues: list[ValidationIssue] = []
     for net_to_lines in _aggregation_groups(records):
-        for issue in _group_aggregation_issues(net_to_lines):
-            issues.append(issue)
+        issues.extend(_group_aggregation_issues(net_to_lines))
 
     issues.sort(
         key=lambda issue: (
@@ -170,13 +170,19 @@ def _collapse_same_version(unique: list[Network]) -> list[Network]:
     """Collapse a same-version network list with stable typing."""
     if not unique:
         return []
+    return list(ipaddress.collapse_addresses(unique))
 
-    if isinstance(unique[0], ipaddress.IPv4Network):
-        ipv4_nets = [net for net in unique if isinstance(net, ipaddress.IPv4Network)]
-        return list(ipaddress.collapse_addresses(ipv4_nets))
 
-    ipv6_nets = [net for net in unique if isinstance(net, ipaddress.IPv6Network)]
-    return list(ipaddress.collapse_addresses(ipv6_nets))
+@lru_cache(maxsize=512)
+def _lookup_country(alpha2: str):
+    """Return cached ISO 3166-1 country lookup results."""
+    return pycountry.countries.get(alpha_2=alpha2)
+
+
+@lru_cache(maxsize=4096)
+def _lookup_subdivision(code: str):
+    """Return cached ISO 3166-2 subdivision lookup results."""
+    return pycountry.subdivisions.get(code=code)
 
 
 def validate_bytes(
@@ -456,7 +462,7 @@ def _validate_country(
             )
         )
 
-    if pycountry.countries.get(alpha_2=country_norm):
+    if _lookup_country(country_norm):
         return country_norm
 
     issues.append(
@@ -491,7 +497,7 @@ def _validate_region(
             )
         )
 
-    subdivision = pycountry.subdivisions.get(code=region_norm)
+    subdivision = _lookup_subdivision(region_norm)
     if subdivision is None:
         issues.append(
             ValidationIssue(
