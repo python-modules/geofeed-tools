@@ -150,10 +150,7 @@ def render_doctor_text(result: DoctorResult) -> str:
     ]
 
     if result.lookup.bootstrap_source_url is not None:
-        lines.append(
-            "Bootstrap source: "
-            f"{result.lookup.bootstrap_source_url}"
-        )
+        lines.append(f"Bootstrap source: {result.lookup.bootstrap_source_url}")
 
     if result.lookup.resolved_urls:
         lines.append("RDAP trace:")
@@ -165,15 +162,9 @@ def render_doctor_text(result: DoctorResult) -> str:
         lines.append(f"Referring range: {result.lookup.referring_range}")
 
     lines.append(f"Geofeed URL: {result.lookup.geofeed_url or 'not found'}")
-    lines.append(
-        "Geofeed discovered via: "
-        f"{result.lookup.geofeed_discovered_via or 'not found'}"
-    )
+    lines.append(f"Geofeed discovered via: {result.lookup.geofeed_discovered_via or 'not found'}")
     if result.lookup.geofeed_reference_url is not None:
-        lines.append(
-            "Geofeed reference object: "
-            f"{result.lookup.geofeed_reference_url}"
-        )
+        lines.append(f"Geofeed reference object: {result.lookup.geofeed_reference_url}")
 
     lines.append("")
     lines.append("Matches:")

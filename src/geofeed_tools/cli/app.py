@@ -338,11 +338,7 @@ def _register_doctor_command(app, typer) -> None:
         )
         assert isinstance(result, DoctorResult)
 
-        payload = (
-            doctor_to_json(result)
-            if json_output
-            else render_doctor_text(result)
-        )
+        payload = doctor_to_json(result) if json_output else render_doctor_text(result)
         print(payload)
 
         if result.lookup.geofeed_url is None or not result.matches:

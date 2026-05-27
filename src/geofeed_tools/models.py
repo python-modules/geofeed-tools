@@ -54,10 +54,7 @@ class ValidationIssue:
     def format(self) -> str:
         """Render the issue as a human-readable single-line message."""
         location = f"line {self.line}" if self.line is not None else "file"
-        return (
-            f"[{self.severity.upper()}] {location}: "
-            f"{self.code}: {self.message}"
-        )
+        return f"[{self.severity.upper()}] {location}: {self.code}: {self.message}"
 
 
 @dataclass(frozen=True)

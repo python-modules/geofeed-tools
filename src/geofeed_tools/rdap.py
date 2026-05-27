@@ -238,8 +238,7 @@ def _parse_bootstrap_index(
                 network = ipaddress.ip_network(prefix_text, strict=True)
             except ValueError:
                 logger.warning(
-                    "Skipping invalid IANA RDAP bootstrap prefix: "
-                    "source=%s prefix=%r",
+                    "Skipping invalid IANA RDAP bootstrap prefix: source=%s prefix=%r",
                     source_url,
                     prefix_text,
                 )
@@ -364,15 +363,10 @@ def _link_geofeed_candidates(
         href = _string(link.get("href"))
         relation = _string(link.get("rel"))
         content_type = _string(link.get("type"))
-        relation_tokens = (
-            set(relation.split()) if relation is not None else set()
-        )
+        relation_tokens = set(relation.split()) if relation is not None else set()
         if href is None:
             continue
-        if (
-            "geofeed" in relation_tokens
-            or content_type == "application/geofeed+csv"
-        ):
+        if "geofeed" in relation_tokens or content_type == "application/geofeed+csv":
             candidates.append((_clean_url(href), LINK_GEOFEED_SOURCE))
 
     return candidates
@@ -423,8 +417,7 @@ def _extract_geofeed_reference(
                 geofeed_source = sources[0]
         else:
             logger.warning(
-                "Ignoring RDAP object with multiple geofeed references: "
-                "candidates=%s",
+                "Ignoring RDAP object with multiple geofeed references: candidates=%s",
                 sorted(unique_urls),
             )
 
