@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from ._query_cache import QueryIndex, QueryIndexCache
+from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
+from .doctor import doctor_query, render_doctor_text
 from .info import build_info
 from .io_utils import (
+    doctor_to_json,
     info_to_json,
     query_to_json,
     records_to_csv,
@@ -11,19 +15,49 @@ from .io_utils import (
     report_to_json,
 )
 from .loader import FetchError, decode_text, load_input, source_kind
-from .logging import TRACE_LEVEL, logger
-from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .logging import logger
+from .models import DoctorResult, GeoFeedDiscoveryError, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
-from .parse import annotate_validity, parse_text
-from .query import Network, load_query_records, query_text
+from .parse import annotate_validity, parse_text, parse_text_with_networks
+from .query import load_query_records, query_text
 from .validate import render_validation_text, validate_bytes
-
-QueryIndex = list[tuple[Network, GeofeedRecord]]
 
 
 def _validate_output(output: str, allowed: tuple[str, ...]) -> None:
     if output not in allowed:
         raise ValueError(f"output must be one of: {', '.join(allowed)}")
+
+
+def _serialize_query_result(
+    result: QueryResult,
+    *,
+    output: str,
+) -> QueryResult | str:
+    _validate_output(output, ("objects", "json", "csv"))
+    if output == "objects":
+        return result
+    if output == "json":
+        return query_to_json(result)
+    return records_to_csv(result.matches, include_validation=False)
+
+
+def _serialize_doctor_result(
+    result: DoctorResult,
+    *,
+    output: str,
+) -> DoctorResult | str:
+    _validate_output(output, ("objects", "json", "text"))
+    if output == "objects":
+        return result
+    if output == "json":
+        return doctor_to_json(result)
+    return render_doctor_text(result)
+
+
+def _build_lookup_result(result: DoctorResult) -> QueryResult:
+    if result.lookup.geofeed_url is None:
+        raise GeoFeedDiscoveryError(result.query)
+    return QueryResult(query=result.query, matches=result.matches)
 
 
 def _build_parsed_records(
@@ -264,7 +298,6 @@ def _query_loaded(
     output: str = "objects",
     indexed_records: QueryIndex | None = None,
 ) -> QueryResult | str:
-    _validate_output(output, ("objects", "json", "csv"))
     logger.info("Querying geofeed source: %s query=%s", source, query)
     logger.debug(
         "Query options: source=%s query=%s return_all=%s include_longer=%s output=%s",
@@ -281,6 +314,7 @@ def _query_loaded(
         include_longer=include_longer,
         indexed_records=indexed_records,
     )
+    serialized = _serialize_query_result(result, output=output)
     if output == "objects":
         logger.debug(
             "Query completed: source=%s query=%s matches=%d output=%s",
@@ -289,9 +323,10 @@ def _query_loaded(
             len(result.matches),
             output,
         )
-        return result
+        return serialized
+    payload = serialized
+    assert isinstance(payload, str)
     if output == "json":
-        payload = query_to_json(result)
         logger.debug(
             "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
             source,
@@ -300,16 +335,15 @@ def _query_loaded(
             output,
             len(payload),
         )
-        return payload
-    payload = records_to_csv(result.matches, include_validation=False)
-    logger.debug(
-        "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
-        source,
-        query,
-        len(result.matches),
-        output,
-        len(payload),
-    )
+    else:
+        logger.debug(
+            "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
+            source,
+            query,
+            len(result.matches),
+            output,
+            len(payload),
+        )
     return payload
 
 
@@ -323,20 +357,13 @@ def _info_loaded(
 ) -> GeoFeedInfo | str:
     _validate_output(output, ("objects", "json"))
     logger.info("Computing geofeed summary: %s", source)
-    records = _build_parsed_records(
-        source,
-        raw,
-        text,
-        content_type,
-        include_validation=False,
-        normalize=False,
-    )
+    records, networks = parse_text_with_networks(text)
     report = _build_validation_report(
         source,
         raw,
         content_type,
     )
-    info = build_info(source, records, report)
+    info = build_info(source, records, report, networks=networks)
     if output == "objects":
         logger.debug(
             "Computed geofeed summary: source=%s total_records=%d errors=%d warnings=%d output=%s",
@@ -360,7 +387,136 @@ def _info_loaded(
     return payload
 
 
-class GeoFeed:
+def _doctor(
+    query: str,
+    *,
+    return_all: bool = False,
+    include_longer: bool = False,
+    rdap_method: str = DEFAULT_RDAP_METHOD,
+    output: str = "objects",
+) -> DoctorResult | str:
+    logger.info("Running doctor command for query=%s", query)
+    result = doctor_query(
+        query,
+        return_all=return_all,
+        include_longer=include_longer,
+        rdap_method=rdap_method,
+    )
+    serialized = _serialize_doctor_result(result, output=output)
+    if output == "objects":
+        logger.debug(
+            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s",
+            query,
+            result.lookup.geofeed_url,
+            len(result.matches),
+            output,
+        )
+        return serialized
+    payload = serialized
+    assert isinstance(payload, str)
+    if output == "json":
+        logger.debug(
+            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(result.matches),
+            output,
+            len(payload),
+        )
+    else:
+        logger.debug(
+            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(result.matches),
+            output,
+            len(payload),
+        )
+    return payload
+
+
+def _lookup(
+    query: str,
+    *,
+    return_all: bool = False,
+    include_longer: bool = False,
+    rdap_method: str = DEFAULT_RDAP_METHOD,
+    output: str = "objects",
+) -> QueryResult | str:
+    logger.info("Running lookup command for query=%s", query)
+    result = doctor_query(
+        query,
+        return_all=return_all,
+        include_longer=include_longer,
+        rdap_method=rdap_method,
+    )
+    query_result = _build_lookup_result(result)
+    serialized = _serialize_query_result(query_result, output=output)
+    if output == "objects":
+        logger.debug(
+            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s",
+            query,
+            result.lookup.geofeed_url,
+            len(query_result.matches),
+            output,
+        )
+        return serialized
+    payload = serialized
+    assert isinstance(payload, str)
+    if output == "json":
+        logger.debug(
+            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(query_result.matches),
+            output,
+            len(payload),
+        )
+    else:
+        logger.debug(
+            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(query_result.matches),
+            output,
+            len(payload),
+        )
+    return payload
+
+
+class _GeoFeedBase:
+    """Shared state and cache helpers for sync and async geofeed APIs."""
+
+    def __init__(self, source: str, *, cache_query_index: bool = True) -> None:
+        self.source = source
+        self._cache_query_index = cache_query_index
+        self.raw: bytes | None = None
+        self.content_type: str | None = None
+        self.text: str | None = None
+        self._query_index_state = QueryIndexCache(enabled=cache_query_index)
+
+    def _update_loaded_content(
+        self,
+        raw: bytes,
+        content_type: str | None,
+    ) -> str:
+        """Store loaded bytes, decode text, and invalidate the query index cache."""
+        self.raw = raw
+        self.content_type = content_type
+        # Parser and normalizer behavior strips UTF-8 BOM before processing.
+        text = decode_text(raw, strip_bom=True)
+        self.text = text
+        self._query_index_state.invalidate()
+        return text
+
+    def _get_cached_query_index(self) -> QueryIndex | None:
+        return self._query_index_state.get_cached()
+
+    def _store_query_index(self, index: QueryIndex) -> QueryIndex:
+        return self._query_index_state.store(index)
+
+
+class GeoFeed(_GeoFeedBase):
     """Main object-oriented API for geofeed workflows."""
 
     def __init__(
@@ -371,14 +527,7 @@ class GeoFeed:
         cache_query_index: bool = True,
     ):
         """Initialize a geofeed source and optionally load it immediately."""
-        self.source = source
-        self._cache_query_index = cache_query_index
-        self.raw: bytes | None = None
-        self.content_type: str | None = None
-        self.text: str | None = None
-        self._query_index_cache: QueryIndex | None = None
-        self._query_index_text: str | None = None
-
+        super().__init__(source, cache_query_index=cache_query_index)
         if auto_load:
             self.reload()
 
@@ -386,19 +535,13 @@ class GeoFeed:
         """Reload the source bytes and decoded text from disk or HTTP."""
         logger.info("Loading geofeed source from %s: %s", source_kind(self.source), self.source)
         raw, content_type = load_input(self.source)
-        self.raw = raw
-        self.content_type = content_type
-        # Parser and normalizer behavior strips UTF-8 BOM before processing.
-        self.text = decode_text(raw, strip_bom=True)
-        self._query_index_cache = None
-        self._query_index_text = None
-        assert self.text is not None
+        text = self._update_loaded_content(raw, content_type)
         logger.debug(
             "Loaded geofeed source from %s: %s bytes=%d chars=%d content_type=%r",
             source_kind(self.source),
             self.source,
             len(raw),
-            len(self.text),
+            len(text),
             content_type,
         )
 
@@ -484,12 +627,9 @@ class GeoFeed:
     ) -> QueryResult | str:
         """Query the source for an IP or prefix and return matching records."""
         _raw, text = self._ensure_loaded()
-        indexed_records: QueryIndex | None = None
-        if self._cache_query_index:
-            if self._query_index_cache is None or self._query_index_text != text:
-                self._query_index_cache = load_query_records(text)
-                self._query_index_text = text
-            indexed_records = self._query_index_cache
+        indexed_records = self._get_cached_query_index()
+        if indexed_records is None and self._cache_query_index:
+            indexed_records = self._store_query_index(load_query_records(text))
         return _query_loaded(
             self.source,
             text,
@@ -498,6 +638,45 @@ class GeoFeed:
             include_longer=include_longer,
             output=output,
             indexed_records=indexed_records,
+        )
+
+    @staticmethod
+    def doctor(
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+        output: str = "objects",
+    ) -> DoctorResult | str:
+        """Discover and query a published geofeed for an IP or prefix via RDAP."""
+        return _doctor(
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+            output=output,
+        )
+
+    @staticmethod
+    def lookup(
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+        output: str = "objects",
+    ) -> QueryResult | str:
+        """Discover a geofeed via RDAP and return query results for an IP or prefix.
+
+        Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
+        """
+        return _lookup(
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+            output=output,
         )
 
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
@@ -512,4 +691,4 @@ class GeoFeed:
         )
 
 
-__all__ = ["FetchError", "GeoFeed"]
+__all__ = ["FetchError", "GeoFeed", "GeoFeedDiscoveryError"]

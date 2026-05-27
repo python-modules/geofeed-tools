@@ -1,0 +1,25 @@
+name: Shared Configuration
+
+on:
+  workflow_call:
+    outputs:
+      python-version:
+        description: Default Python version for tooling and build steps.
+        value: ${{ jobs.config.outputs.python-version }}
+      python-versions:
+        description: JSON array of Python versions for the test matrix.
+        value: ${{ jobs.config.outputs.python-versions }}
+
+jobs:
+  config:
+    name: Export shared configuration
+    runs-on: ubuntu-latest
+    outputs:
+      python-version: ${{ steps.config.outputs.python-version }}
+      python-versions: ${{ steps.config.outputs.python-versions }}
+    steps:
+      - name: Set shared variables
+        id: config
+        run: |
+          echo "python-version=3.14" >> "${GITHUB_OUTPUT}"
+          echo 'python-versions=["3.11","3.12","3.13","3.14"]' >> "${GITHUB_OUTPUT}"

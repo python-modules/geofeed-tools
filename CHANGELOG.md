@@ -1,5 +1,15 @@
 # geofeed-tools Changelog
 
+## 2026-05-26 - 0.1.2
+
+- Improve query cache handling
+- Add `doctor` API and CLI support to discover geofeeds via RDAP, fetch the published geofeed, and return structured lookup metadata with matches
+- Add container images for CLI
+- Update GitHub actions workflows for packaging/code quality scans
+- Centralise all config/settings related values into `config.py`
+- Misc small fixups
+- Add check to CLI for requirements to ensure they are available
+
 ## 2026-05-26 - 0.1.1
 
 - Add GitHub actions example and instructions to validate geofeed using CLI hook command

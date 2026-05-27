@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 import sys
 
-LOGGER_NAME = "geofeed_tools"
-TRACE_LEVEL = 5
-logger = logging.getLogger(LOGGER_NAME)
+from .config import LOGGER_NAME, TRACE_LEVEL
 
+logger = logging.getLogger(LOGGER_NAME)
 
 logging.addLevelName(TRACE_LEVEL, "TRACE")
 

@@ -148,3 +148,88 @@ def test_async_query_reuses_index_until_reload(monkeypatch) -> None:
         return call_count
 
     assert asyncio.run(scenario()) == 2
+
+
+def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
+    """AsyncGeoFeed should skip caching when cache_query_index=False."""
+    call_count = 0
+
+    real_loader = async_core_module.load_query_records
+
+    def counting_loader(text: str):
+        nonlocal call_count
+        call_count += 1
+        return real_loader(text)
+
+    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+
+    async def scenario() -> int:
+        geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"), cache_query_index=False)
+        first = await geofeed.query("192.0.2.200", output="objects")
+        second = await geofeed.query("2001:db8::1", output="objects")
+        assert not isinstance(first, str)
+        assert not isinstance(second, str)
+        return call_count
+
+    assert asyncio.run(scenario()) == 0
+
+
+def test_async_lookup_returns_query_result(monkeypatch) -> None:
+    """AsyncGeoFeed.lookup should return a QueryResult from the discovered geofeed."""
+    from geofeed_tools.models import DoctorLookup, DoctorResult, GeofeedRecord, QueryResult
+
+    record_stub = GeofeedRecord(prefix="203.0.113.0/24", country="US")
+
+    async def fake_doctor_query_async(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
+        return DoctorResult(
+            query=query,
+            lookup=DoctorLookup(
+                lookup_strategy="ip-address",
+                rdap_method=rdap_method,
+                rdap_query=query,
+                bootstrap_url=f"https://rdap.org/ip/{query}",
+                geofeed_url="https://example.com/geofeed.csv",
+            ),
+            matches=(record_stub,),
+        )
+
+    monkeypatch.setattr("geofeed_tools.async_core.doctor_query_async", fake_doctor_query_async)
+
+    async def scenario() -> QueryResult:
+        result = await AsyncGeoFeed.lookup("203.0.113.1")
+        assert isinstance(result, QueryResult)
+        return result
+
+    result = asyncio.run(scenario())
+    assert result.query == "203.0.113.1"
+    assert len(result.matches) == 1
+    assert result.matches[0].prefix == "203.0.113.0/24"
+
+
+def test_async_lookup_raises_when_no_geofeed(monkeypatch) -> None:
+    """AsyncGeoFeed.lookup should raise GeoFeedDiscoveryError when no geofeed is found."""
+    from geofeed_tools import GeoFeedDiscoveryError
+    from geofeed_tools.models import DoctorLookup, DoctorResult
+
+    async def fake_doctor_query_async(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
+        return DoctorResult(
+            query=query,
+            lookup=DoctorLookup(
+                lookup_strategy="ip-address",
+                rdap_method=rdap_method,
+                rdap_query=query,
+                bootstrap_url=f"https://rdap.org/ip/{query}",
+            ),
+            matches=(),
+        )
+
+    monkeypatch.setattr("geofeed_tools.async_core.doctor_query_async", fake_doctor_query_async)
+
+    import pytest
+
+    async def scenario():
+        with pytest.raises(GeoFeedDiscoveryError) as exc_info:
+            await AsyncGeoFeed.lookup("203.0.113.1")
+        assert exc_info.value.query == "203.0.113.1"
+
+    asyncio.run(scenario())

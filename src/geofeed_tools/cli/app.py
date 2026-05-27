@@ -2,17 +2,39 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from enum import StrEnum
 from pathlib import Path
 
-from tabulate import tabulate
+_MISSING_CLI_DEPS: list[str] = []
+for _dep in ("typer", "structlog", "tabulate"):
+    try:
+        __import__(_dep)
+    except ImportError:
+        _MISSING_CLI_DEPS.append(_dep)
 
-from geofeed_tools import GeoFeed
-from geofeed_tools.io_utils import report_to_json
-from geofeed_tools.logging import configure_cli_structlog
-from geofeed_tools.models import GeofeedRecord, ValidationReport
-from geofeed_tools.validate import render_validation_text
+if _MISSING_CLI_DEPS:
+    print(
+        "geofeed-tools CLI requires optional dependencies that are not installed.\n"
+        f"  Missing: {', '.join(_MISSING_CLI_DEPS)}\n"
+        "\n"
+        "Install the CLI extras with:\n"
+        "  pip install 'geofeed-tools[cli]'\n"
+        "  uv pip install 'geofeed-tools[cli]'",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+from tabulate import tabulate  # noqa: E402
+
+from geofeed_tools import GeoFeed, GeoFeedDiscoveryError  # noqa: E402
+from geofeed_tools.doctor import render_doctor_text  # noqa: E402
+from geofeed_tools.io_utils import doctor_to_json, report_to_json  # noqa: E402
+from geofeed_tools.logging import configure_cli_structlog  # noqa: E402
+from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport  # noqa: E402
+from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD  # noqa: E402
+from geofeed_tools.validate import render_validation_text  # noqa: E402
 
 JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
@@ -24,6 +46,13 @@ class DumpFormat(StrEnum):
     JSON = "json"
     CSV = "csv"
     TABLE = "table"
+
+
+class RdapMethod(StrEnum):
+    """Supported RDAP lookup methods for doctor."""
+
+    RDAP_ORG = RDAP_ORG_METHOD
+    IANA_BOOTSTRAP = IANA_BOOTSTRAP_METHOD
 
 
 def _require_cli_deps():
@@ -43,6 +72,8 @@ def build_app():
     _register_validate_command(app, typer)
     _register_normalize_command(app, typer)
     _register_query_command(app, typer)
+    _register_doctor_command(app, typer)
+    _register_lookup_command(app, typer)
     _register_info_command(app, typer)
     _register_hook_command(app, typer)
     return app
@@ -76,6 +107,27 @@ def _render_dump_table(
     if include_validation:
         headers.extend(["Valid", "Validation messages"])
     return tabulate(rows, headers=headers, tablefmt="github")
+
+
+def _emit_query_payload(
+    payload: str,
+    *,
+    output: str,
+    query: str,
+    empty_source: str,
+    fail_on_empty_json: bool,
+    typer,
+) -> None:
+    if output == "csv":
+        if not payload.strip():
+            print(f"no match for {query} in {empty_source}", file=sys.stderr)
+            raise typer.Exit(code=1)
+        print(payload, end="")
+        return
+
+    print(payload)
+    if fail_on_empty_json and not json.loads(payload)["matches"]:
+        raise typer.Exit(code=1)
 
 
 def _register_dump_command(app, typer) -> None:
@@ -276,19 +328,116 @@ def _register_query_command(app, typer) -> None:
         geofeed = GeoFeed(source, cache_query_index=False)
 
         output = "json" if json_output else "csv"
-        result = geofeed.query(
+        payload = geofeed.query(
             query,
             return_all=show_all,
             include_longer=include_longer,
             output=output,
         )
-        assert isinstance(result, str)
+        assert isinstance(payload, str)
+        _emit_query_payload(
+            payload,
+            output=output,
+            query=query,
+            empty_source=source,
+            fail_on_empty_json=False,
+            typer=typer,
+        )
 
-        if output == "csv" and not result.strip():
-            print(f"no match for {query} in {source}", file=sys.stderr)
+
+def _register_doctor_command(app, typer) -> None:
+    """Register the doctor command."""
+
+    @app.command("doctor")
+    def doctor_command(
+        query: str,
+        show_all: bool = typer.Option(False, "--all", help="Show all matches"),
+        include_longer: bool = typer.Option(
+            False,
+            "--longer",
+            help="Include more-specific prefixes contained by the query",
+        ),
+        rdap_method: RdapMethod = typer.Option(
+            RdapMethod.RDAP_ORG,
+            "--rdap-method",
+            help="RDAP lookup method: rdap.org (default) or iana-bootstrap",
+        ),
+        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
+        verbose: int = typer.Option(
+            0,
+            "-v",
+            "--verbose",
+            count=True,
+            help=VERBOSE_HELP,
+        ),
+    ) -> None:
+        """Discover and query a published geofeed by IP or prefix."""
+        configure_cli_structlog(verbose)
+        result = GeoFeed.doctor(
+            query,
+            return_all=show_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+            output="objects",
+        )
+        assert isinstance(result, DoctorResult)
+
+        payload = doctor_to_json(result) if json_output else render_doctor_text(result)
+        print(payload)
+
+        if result.lookup.geofeed_url is None or not result.matches:
             raise typer.Exit(code=1)
 
-        print(result, end="" if output == "csv" else "\n")
+
+def _register_lookup_command(app, typer) -> None:
+    """Register the lookup command."""
+
+    @app.command("lookup")
+    def lookup_command(
+        query: str,
+        show_all: bool = typer.Option(False, "--all", help="Show all matches"),
+        include_longer: bool = typer.Option(
+            False,
+            "--longer",
+            help="Include more-specific prefixes contained by the query",
+        ),
+        rdap_method: RdapMethod = typer.Option(
+            RdapMethod.RDAP_ORG,
+            "--rdap-method",
+            help="RDAP lookup method: rdap.org (default) or iana-bootstrap",
+        ),
+        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
+        verbose: int = typer.Option(
+            0,
+            "-v",
+            "--verbose",
+            count=True,
+            help=VERBOSE_HELP,
+        ),
+    ) -> None:
+        """Discover a published geofeed via RDAP and query it by IP or prefix."""
+        configure_cli_structlog(verbose)
+        output = "json" if json_output else "csv"
+        try:
+            payload = GeoFeed.lookup(
+                query,
+                return_all=show_all,
+                include_longer=include_longer,
+                rdap_method=rdap_method,
+                output=output,
+            )
+        except GeoFeedDiscoveryError as exc:
+            print(str(exc), file=sys.stderr)
+            raise typer.Exit(code=1) from exc
+        assert isinstance(payload, str)
+        _emit_query_payload(
+            payload,
+            output=output,
+            query=query,
+            empty_source="discovered geofeed",
+            fail_on_empty_json=True,
+            typer=typer,
+        )
 
 
 def _register_info_command(app, typer) -> None:
