@@ -116,7 +116,7 @@ def _group_aggregation_issues(
             unique,
             supernet,
         )
-        if len({net for net, _line in contributors}) < 2:
+        if len({net for net, _line, _raw in contributors}) < 2:
             continue
         contributors.sort(key=lambda item: (item[1], item[0]))
         issues.append(_aggregation_issue(contributors, supernet))

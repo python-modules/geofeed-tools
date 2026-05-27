@@ -184,5 +184,6 @@ class GeoFeedDiscoveryError(Exception):
     """Raised when no geofeed URL can be discovered for a given query."""
 
     def __init__(self, query: str) -> None:
+        """Initialize with the query that produced no geofeed discovery."""
         super().__init__(f"no geofeed found for {query!r}")
         self.query = query

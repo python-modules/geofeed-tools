@@ -498,13 +498,15 @@ class _GeoFeedBase:
         self,
         raw: bytes,
         content_type: str | None,
-    ) -> None:
+    ) -> str:
+        """Store loaded bytes, decode text, and invalidate the query index cache."""
         self.raw = raw
         self.content_type = content_type
         # Parser and normalizer behavior strips UTF-8 BOM before processing.
-        self.text = decode_text(raw, strip_bom=True)
+        text = decode_text(raw, strip_bom=True)
+        self.text = text
         self._query_index_state.invalidate()
-        assert self.text is not None
+        return text
 
     def _get_cached_query_index(self) -> QueryIndex | None:
         return self._query_index_state.get_cached()
@@ -532,13 +534,13 @@ class GeoFeed(_GeoFeedBase):
         """Reload the source bytes and decoded text from disk or HTTP."""
         logger.info("Loading geofeed source from %s: %s", source_kind(self.source), self.source)
         raw, content_type = load_input(self.source)
-        self._update_loaded_content(raw, content_type)
+        text = self._update_loaded_content(raw, content_type)
         logger.debug(
             "Loaded geofeed source from %s: %s bytes=%d chars=%d content_type=%r",
             source_kind(self.source),
             self.source,
             len(raw),
-            len(self.text),
+            len(text),
             content_type,
         )
 

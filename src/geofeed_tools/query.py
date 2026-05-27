@@ -63,6 +63,7 @@ class QueryIndex:
         )
 
     def __len__(self) -> int:
+        """Return the number of indexed geofeed entries."""
         return len(self.entries)
 
 

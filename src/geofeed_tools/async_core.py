@@ -52,13 +52,13 @@ class AsyncGeoFeed(_GeoFeedBase):
             self.source,
         )
         raw, content_type = await load_input_async(self.source)
-        self._update_loaded_content(raw, content_type)
+        text = self._update_loaded_content(raw, content_type)
         logger.debug(
             "Loaded geofeed source asynchronously from %s: %s bytes=%d chars=%d content_type=%r",
             source_kind(self.source),
             self.source,
             len(raw),
-            len(self.text),
+            len(text),
             content_type,
         )
 
