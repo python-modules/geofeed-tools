@@ -486,11 +486,41 @@ def _lookup(
             len(query_result.matches),
             output,
             len(payload),
-        )
+    )
     return payload
 
 
-class GeoFeed:
+class _GeoFeedBase:
+    """Shared state and cache helpers for sync and async geofeed APIs."""
+
+    def __init__(self, source: str, *, cache_query_index: bool = True) -> None:
+        self.source = source
+        self._cache_query_index = cache_query_index
+        self.raw: bytes | None = None
+        self.content_type: str | None = None
+        self.text: str | None = None
+        self._query_index_state = QueryIndexCache(enabled=cache_query_index)
+
+    def _update_loaded_content(
+        self,
+        raw: bytes,
+        content_type: str | None,
+    ) -> None:
+        self.raw = raw
+        self.content_type = content_type
+        # Parser and normalizer behavior strips UTF-8 BOM before processing.
+        self.text = decode_text(raw, strip_bom=True)
+        self._query_index_state.invalidate()
+        assert self.text is not None
+
+    def _get_cached_query_index(self) -> QueryIndex | None:
+        return self._query_index_state.get_cached()
+
+    def _store_query_index(self, index: QueryIndex) -> QueryIndex:
+        return self._query_index_state.store(index)
+
+
+class GeoFeed(_GeoFeedBase):
     """Main object-oriented API for geofeed workflows."""
 
     def __init__(
@@ -501,13 +531,7 @@ class GeoFeed:
         cache_query_index: bool = True,
     ):
         """Initialize a geofeed source and optionally load it immediately."""
-        self.source = source
-        self._cache_query_index = cache_query_index
-        self.raw: bytes | None = None
-        self.content_type: str | None = None
-        self.text: str | None = None
-        self._query_index_state = QueryIndexCache(enabled=cache_query_index)
-
+        super().__init__(source, cache_query_index=cache_query_index)
         if auto_load:
             self.reload()
 
@@ -515,12 +539,7 @@ class GeoFeed:
         """Reload the source bytes and decoded text from disk or HTTP."""
         logger.info("Loading geofeed source from %s: %s", source_kind(self.source), self.source)
         raw, content_type = load_input(self.source)
-        self.raw = raw
-        self.content_type = content_type
-        # Parser and normalizer behavior strips UTF-8 BOM before processing.
-        self.text = decode_text(raw, strip_bom=True)
-        self._query_index_state.invalidate()
-        assert self.text is not None
+        self._update_loaded_content(raw, content_type)
         logger.debug(
             "Loaded geofeed source from %s: %s bytes=%d chars=%d content_type=%r",
             source_kind(self.source),
@@ -612,9 +631,9 @@ class GeoFeed:
     ) -> QueryResult | str:
         """Query the source for an IP or prefix and return matching records."""
         _raw, text = self._ensure_loaded()
-        indexed_records = self._query_index_state.get_cached()
+        indexed_records = self._get_cached_query_index()
         if indexed_records is None and self._cache_query_index:
-            indexed_records = self._query_index_state.store(load_query_records(text))
+            indexed_records = self._store_query_index(load_query_records(text))
         return _query_loaded(
             self.source,
             text,

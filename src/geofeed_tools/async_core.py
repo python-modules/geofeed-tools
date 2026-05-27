@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from ._query_cache import QueryIndexCache
 from .core import (
+    _GeoFeedBase,
     _build_lookup_result,
     _info_loaded,
     _normalize_loaded,
@@ -16,7 +16,7 @@ from .core import (
     _validate_loaded,
 )
 from .doctor import doctor_query_async
-from .loader import FetchError, decode_text, load_input_async, source_kind
+from .loader import FetchError, load_input_async, source_kind
 from .logging import TRACE_LEVEL, logger
 from .models import (
     DoctorResult,
@@ -29,17 +29,12 @@ from .models import (
 from .query import load_query_records
 
 
-class AsyncGeoFeed:
+class AsyncGeoFeed(_GeoFeedBase):
     """Async-native geofeed API for library consumers."""
 
     def __init__(self, source: str, *, cache_query_index: bool = True):
         """Initialize an async geofeed wrapper around a local path or URL."""
-        self.source = source
-        self._cache_query_index = cache_query_index
-        self.raw: bytes | None = None
-        self.content_type: str | None = None
-        self.text: str | None = None
-        self._query_index_state = QueryIndexCache(enabled=cache_query_index)
+        super().__init__(source, cache_query_index=cache_query_index)
 
     @classmethod
     async def from_source(cls, source: str, *, cache_query_index: bool = True) -> AsyncGeoFeed:
@@ -57,11 +52,7 @@ class AsyncGeoFeed:
             self.source,
         )
         raw, content_type = await load_input_async(self.source)
-        self.raw = raw
-        self.content_type = content_type
-        self.text = decode_text(raw, strip_bom=True)
-        self._query_index_state.invalidate()
-        assert self.text is not None
+        self._update_loaded_content(raw, content_type)
         logger.debug(
             "Loaded geofeed source asynchronously from %s: %s bytes=%d chars=%d content_type=%r",
             source_kind(self.source),
@@ -156,9 +147,11 @@ class AsyncGeoFeed:
     ) -> QueryResult | str:
         """Query the source asynchronously for an IP or prefix."""
         _raw, text = await self._ensure_loaded()
-        indexed_records = self._query_index_state.get_cached()
+        indexed_records = self._get_cached_query_index()
         if indexed_records is None and self._cache_query_index:
-            indexed_records = self._query_index_state.store(await asyncio.to_thread(load_query_records, text))
+            indexed_records = self._store_query_index(
+                await asyncio.to_thread(load_query_records, text)
+            )
         return await asyncio.to_thread(
             _query_loaded,
             self.source,
