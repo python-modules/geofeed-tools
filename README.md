@@ -5,6 +5,7 @@
 - [geofeed-tools](#geofeed-tools)
   - [Basic Overview](#basic-overview)
   - [Installation](#installation)
+    - [Docker](#docker)
   - [Python API](#python-api)
     - [Quick Start](#quick-start)
     - [Public Imports](#public-imports)
@@ -44,7 +45,6 @@
     - [HTML test reports](#html-test-reports)
     - [Test Notes](#test-notes)
 
-
 ## Basic Overview
 
 - Validate geofeed quality and RFC 8805 compliance
@@ -78,6 +78,23 @@ Install development dependencies:
 
 ```bash
 uv pip install 'geofeed-tools[dev]'
+```
+
+### Docker
+
+If Docker is available, you can run the CLI without installing Python or package dependencies on the host.
+
+Published images:
+
+- GHCR: `ghcr.io/python-modules/geofeed-tools`
+- Docker Hub: `pythonmodules/geofeed-tools`
+- Floating tags: `python3`, `python3.11`, `python3.12`, `python3.13`
+- `latest` tracks the `python3` build
+
+The containers entry point is the CLI; run by simpling providing the command/arguments. As an example:
+
+```bash
+docker run --rm pythonmodules/geofeed-tools:latest doctor 192.0.2.0
 ```
 
 ## Python API
