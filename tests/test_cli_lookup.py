@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from typer.testing import CliRunner
+
 from geofeed_tools import GeoFeedDiscoveryError, GeofeedRecord, QueryResult
 from geofeed_tools.cli.app import build_app
 from geofeed_tools.io_utils import query_to_json, records_to_csv
-from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -45,7 +46,7 @@ def _make_fake_geofeed(result: QueryResult | GeoFeedDiscoveryError):
 
 
 def test_cli_lookup_emits_csv_by_default(monkeypatch) -> None:
-    """lookup should print CSV of matches when a geofeed and match are found."""
+    """Lookup should print CSV of matches when a geofeed and match are found."""
     qr = QueryResult(query="203.0.113.1", matches=(_SAMPLE_RECORD,))
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
@@ -57,7 +58,7 @@ def test_cli_lookup_emits_csv_by_default(monkeypatch) -> None:
 
 
 def test_cli_lookup_emits_json(monkeypatch) -> None:
-    """lookup --json should emit a QueryResult-shaped JSON payload."""
+    """Lookup --json should emit a QueryResult-shaped JSON payload."""
     qr = QueryResult(query="203.0.113.1", matches=(_SAMPLE_RECORD,))
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
@@ -72,7 +73,7 @@ def test_cli_lookup_emits_json(monkeypatch) -> None:
 
 
 def test_cli_lookup_exits_nonzero_when_no_geofeed(monkeypatch) -> None:
-    """lookup should fail with a message when no geofeed URL is discovered."""
+    """Lookup should fail with a message when no geofeed URL is discovered."""
     monkeypatch.setattr(
         "geofeed_tools.cli.app.GeoFeed",
         _make_fake_geofeed(GeoFeedDiscoveryError("203.0.113.1")),
@@ -85,7 +86,7 @@ def test_cli_lookup_exits_nonzero_when_no_geofeed(monkeypatch) -> None:
 
 
 def test_cli_lookup_exits_nonzero_when_no_matches(monkeypatch) -> None:
-    """lookup should fail when the geofeed is found but has no matching records."""
+    """Lookup should fail when the geofeed is found but has no matching records."""
     qr = QueryResult(query="203.0.113.1", matches=())
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
@@ -96,7 +97,7 @@ def test_cli_lookup_exits_nonzero_when_no_matches(monkeypatch) -> None:
 
 
 def test_cli_lookup_exits_nonzero_when_no_matches_json(monkeypatch) -> None:
-    """lookup --json should still exit 1 when no matches are found."""
+    """Lookup --json should still exit 1 when no matches are found."""
     qr = QueryResult(query="203.0.113.1", matches=())
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
@@ -107,7 +108,7 @@ def test_cli_lookup_exits_nonzero_when_no_matches_json(monkeypatch) -> None:
 
 
 def test_cli_lookup_accepts_rdap_method_override(monkeypatch) -> None:
-    """lookup should forward --rdap-method to GeoFeed.lookup."""
+    """Lookup should forward --rdap-method to GeoFeed.lookup."""
     captured: dict[str, str] = {}
 
     class CapturingFakeGeoFeed:

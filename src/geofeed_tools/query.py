@@ -185,10 +185,7 @@ def find_matches(
     if include_longer and node is not None:
         _collect_descendant_indices(node, match_indices)
 
-    return [
-        records.entries[index].record
-        for index in _sorted_unique_indices(records, match_indices)
-    ]
+    return [records.entries[index].record for index in _sorted_unique_indices(records, match_indices)]
 
 
 def _insert_entry(

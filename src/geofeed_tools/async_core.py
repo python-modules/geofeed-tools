@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 
 from .core import (
-    _GeoFeedBase,
     _build_lookup_result,
+    _GeoFeedBase,
     _info_loaded,
     _normalize_loaded,
     _parse_loaded,
@@ -149,9 +149,7 @@ class AsyncGeoFeed(_GeoFeedBase):
         _raw, text = await self._ensure_loaded()
         indexed_records = self._get_cached_query_index()
         if indexed_records is None and self._cache_query_index:
-            indexed_records = self._store_query_index(
-                await asyncio.to_thread(load_query_records, text)
-            )
+            indexed_records = self._store_query_index(await asyncio.to_thread(load_query_records, text))
         return await asyncio.to_thread(
             _query_loaded,
             self.source,

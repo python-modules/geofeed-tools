@@ -13,10 +13,7 @@ def test_doctor_discovers_geofeed_link_and_returns_matches(
     monkeypatch,
 ) -> None:
     """Doctor should use a direct RDAP geofeed link."""
-    geofeed_text = (
-        "192.0.2.0/24,US,US-CA,Los Angeles,\n"
-        "192.0.2.128/25,US,US-CA,Pasadena,\n"
-    )
+    geofeed_text = "192.0.2.0/24,US,US-CA,Los Angeles,\n192.0.2.128/25,US,US-CA,Pasadena,\n"
     rdap_response: dict[str, object] = {
         "handle": "NET-192-0-2-0-1",
         "startAddress": "192.0.2.0",
@@ -53,9 +50,7 @@ def test_doctor_discovers_geofeed_link_and_returns_matches(
     assert result.lookup.lookup_strategy == "ip-address"
     assert result.lookup.rdap_method == "rdap.org"
     assert result.lookup.rdap_query == "192.0.2.200"
-    assert result.lookup.resolved_urls == (
-        "https://rdap.example.test/ip/192.0.2.200",
-    )
+    assert result.lookup.resolved_urls == ("https://rdap.example.test/ip/192.0.2.200",)
     assert result.lookup.referring_handle == "NET-192-0-2-0-1"
     assert result.lookup.referring_range == "192.0.2.0 - 192.0.2.255"
     assert result.lookup.geofeed_url == "https://example.com/geofeed.csv"
@@ -84,10 +79,7 @@ def test_doctor_follows_parent_and_filters_records(monkeypatch) -> None:
             }
         ],
     }
-    geofeed_text = (
-        "192.0.2.0/24,US,US-CA,Los Angeles,\n"
-        "192.0.3.0/24,CA,CA-ON,Toronto,\n"
-    )
+    geofeed_text = "192.0.2.0/24,US,US-CA,Los Angeles,\n192.0.3.0/24,CA,CA-ON,Toronto,\n"
 
     def fake_fetch(
         url: str,
@@ -123,10 +115,7 @@ def test_doctor_follows_parent_and_filters_records(monkeypatch) -> None:
         "https://rdap.example.test/ip/child",
         "https://rdap.example.test/ip/parent",
     )
-    assert (
-        result.lookup.geofeed_url
-        == "https://example.com/shared-geofeed.csv"
-    )
+    assert result.lookup.geofeed_url == "https://example.com/shared-geofeed.csv"
     assert result.lookup.geofeed_discovered_via == "rdap remarks geofeed url"
     assert [record.prefix for record in result.matches] == ["192.0.2.0/24"]
 
@@ -160,10 +149,7 @@ def test_doctor_returns_empty_result_when_no_geofeed_is_published(
 
 def test_async_doctor_returns_lookup_metadata(monkeypatch) -> None:
     """Async doctor should mirror the sync doctor metadata."""
-    geofeed_text = (
-        "2001:db8::/32,US,US-NY,New York,\n"
-        "2001:db8:abcd::/48,US,US-NY,Brooklyn,\n"
-    )
+    geofeed_text = "2001:db8::/32,US,US-NY,New York,\n2001:db8:abcd::/48,US,US-NY,Brooklyn,\n"
     rdap_response: dict[str, object] = {
         "handle": "NET6-2001-DB8-1",
         "startAddress": "2001:db8::",
@@ -267,13 +253,7 @@ def test_doctor_supports_iana_bootstrap_lookup(monkeypatch) -> None:
 
     assert isinstance(result, DoctorResult)
     assert result.lookup.rdap_method == "iana-bootstrap"
-    assert (
-        result.lookup.bootstrap_source_url
-        == rdap_module.IANA_BOOTSTRAP_URLS[4]
-    )
-    assert (
-        result.lookup.bootstrap_url
-        == "https://rdap.db.ripe.net/ip/31.133.128.1"
-    )
+    assert result.lookup.bootstrap_source_url == rdap_module.IANA_BOOTSTRAP_URLS[4]
+    assert result.lookup.bootstrap_url == "https://rdap.db.ripe.net/ip/31.133.128.1"
     assert result.lookup.geofeed_url == "https://noc.ietf.org/geo/google.csv"
     assert result.matches[0].prefix == "31.133.128.0/17"

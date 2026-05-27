@@ -43,9 +43,7 @@ def test_cli_doctor_emits_json(monkeypatch) -> None:
                     referring_range="203.0.113.0 - 203.0.113.255",
                     geofeed_url="https://example.com/geofeed.csv",
                     geofeed_discovered_via="rdap link rel=geofeed",
-                    geofeed_reference_url=(
-                        f"https://rdap.example.test/ip/{query}"
-                    ),
+                    geofeed_reference_url=(f"https://rdap.example.test/ip/{query}"),
                 ),
                 matches=(
                     GeofeedRecord(
@@ -132,17 +130,11 @@ def test_cli_doctor_accepts_iana_bootstrap_override(monkeypatch) -> None:
                     rdap_method=rdap_method,
                     rdap_query="31.133.128.1",
                     bootstrap_url="https://rdap.db.ripe.net/ip/31.133.128.1",
-                    bootstrap_source_url=(
-                        "https://data.iana.org/rdap/ipv4.json"
-                    ),
-                    resolved_urls=(
-                        "https://rdap.db.ripe.net/ip/31.133.128.1",
-                    ),
+                    bootstrap_source_url=("https://data.iana.org/rdap/ipv4.json"),
+                    resolved_urls=("https://rdap.db.ripe.net/ip/31.133.128.1",),
                     geofeed_url="https://noc.ietf.org/geo/google.csv",
                 ),
-                matches=(
-                    GeofeedRecord(prefix="31.133.128.0/17"),
-                ),
+                matches=(GeofeedRecord(prefix="31.133.128.0/17"),),
             )
 
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", FakeGeoFeed)

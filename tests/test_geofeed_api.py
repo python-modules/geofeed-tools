@@ -188,6 +188,7 @@ def test_lookup_raises_when_no_geofeed(monkeypatch) -> None:
     monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
 
     import pytest
+
     with pytest.raises(GeoFeedDiscoveryError) as exc_info:
         GeoFeed.lookup("203.0.113.1")
     assert exc_info.value.query == "203.0.113.1"

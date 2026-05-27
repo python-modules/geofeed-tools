@@ -15,7 +15,7 @@ from .io_utils import (
 )
 from .loader import FetchError, decode_text, load_input, source_kind
 from .logging import TRACE_LEVEL, logger
-from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, GeoFeedDiscoveryError, QueryResult, ValidationReport
+from .models import DoctorResult, GeoFeedDiscoveryError, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text, parse_text_with_networks
 from .query import load_query_records, query_text
@@ -479,7 +479,7 @@ def _lookup(
             len(query_result.matches),
             output,
             len(payload),
-    )
+        )
     return payload
 
 

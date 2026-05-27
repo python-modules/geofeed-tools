@@ -358,9 +358,7 @@ def _validate_data_line(
     _apply_sort_check(lineno, raw_line, network, issues, state, check_sort)
 
     if check_aggregation:
-        state.records_for_aggregation.append(
-            (network, (country_norm, region_norm, city, postal), lineno, raw_line)
-        )
+        state.records_for_aggregation.append((network, (country_norm, region_norm, city, postal), lineno, raw_line))
 
 
 def _parse_fields(
@@ -590,6 +588,8 @@ def _report_from_issues(
         valid=errors == 0,
         issues=tuple(issues),
     )
+
+
 def render_validation_text(report: ValidationReport) -> str:
     """Render a human-readable validation report."""
     lines = [f"source: {report.source}", f"records: {report.records}"]
