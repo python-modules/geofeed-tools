@@ -273,7 +273,7 @@ def _register_query_command(app, typer) -> None:
     ) -> None:
         """Query a geofeed by IP or prefix."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
+        geofeed = GeoFeed(source, cache_query_index=False)
 
         output = "json" if json_output else "csv"
         result = geofeed.query(

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import geofeed_tools.async_core as async_core_module
 from geofeed_tools import AsyncGeoFeed
 
 
@@ -118,3 +119,32 @@ def test_async_http_parse_returns_records() -> None:
     assert record_count == 3
     assert validated_records == 3
     assert content_type == "text/csv"
+
+
+def test_async_query_reuses_index_until_reload(monkeypatch) -> None:
+    """AsyncGeoFeed query should reuse indexed records until source reload."""
+    call_count = 0
+
+    real_loader = async_core_module.load_query_records
+
+    def counting_loader(text: str):
+        nonlocal call_count
+        call_count += 1
+        return real_loader(text)
+
+    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+
+    async def scenario() -> int:
+        geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"))
+        first = await geofeed.query("192.0.2.200", output="objects")
+        second = await geofeed.query("2001:db8::1", output="objects")
+        assert not isinstance(first, str)
+        assert not isinstance(second, str)
+        assert call_count == 1
+
+        await geofeed.reload()
+        third = await geofeed.query("192.0.2.1", output="objects")
+        assert not isinstance(third, str)
+        return call_count
+
+    assert asyncio.run(scenario()) == 2

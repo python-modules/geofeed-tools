@@ -148,10 +148,11 @@ def query_text(
     *,
     return_all: bool = False,
     include_longer: bool = False,
+    indexed_records: list[tuple[Network, GeofeedRecord]] | None = None,
 ) -> QueryResult:
     """Query a geofeed text payload and return matching records."""
     query_network = parse_query(query)
-    records = load_query_records(text)
+    records = indexed_records if indexed_records is not None else load_query_records(text)
     matches = find_matches(
         records,
         query_network,

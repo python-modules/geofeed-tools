@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from .core import (
+    QueryIndex,
     _info_loaded,
     _normalize_loaded,
     _parse_loaded,
@@ -14,6 +15,7 @@ from .core import (
 from .loader import FetchError, decode_text, load_input_async, source_kind
 from .logging import TRACE_LEVEL, logger
 from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .query import load_query_records
 
 
 class AsyncGeoFeed:
@@ -25,6 +27,8 @@ class AsyncGeoFeed:
         self.raw: bytes | None = None
         self.content_type: str | None = None
         self.text: str | None = None
+        self._query_index_cache: QueryIndex | None = None
+        self._query_index_text: str | None = None
 
     @classmethod
     async def from_source(cls, source: str) -> AsyncGeoFeed:
@@ -45,6 +49,8 @@ class AsyncGeoFeed:
         self.raw = raw
         self.content_type = content_type
         self.text = decode_text(raw, strip_bom=True)
+        self._query_index_cache = None
+        self._query_index_text = None
         assert self.text is not None
         logger.debug(
             "Loaded geofeed source asynchronously from %s: %s bytes=%d chars=%d content_type=%r",
@@ -140,6 +146,9 @@ class AsyncGeoFeed:
     ) -> QueryResult | str:
         """Query the source asynchronously for an IP or prefix."""
         _raw, text = await self._ensure_loaded()
+        if self._query_index_cache is None or self._query_index_text != text:
+            self._query_index_cache = await asyncio.to_thread(load_query_records, text)
+            self._query_index_text = text
         return await asyncio.to_thread(
             _query_loaded,
             self.source,
@@ -148,6 +157,7 @@ class AsyncGeoFeed:
             return_all=return_all,
             include_longer=include_longer,
             output=output,
+            indexed_records=self._query_index_cache,
         )
 
     async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:

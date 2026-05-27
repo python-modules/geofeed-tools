@@ -15,8 +15,10 @@ from .logging import TRACE_LEVEL, logger
 from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text
-from .query import query_text
+from .query import Network, load_query_records, query_text
 from .validate import render_validation_text, validate_bytes
+
+QueryIndex = list[tuple[Network, GeofeedRecord]]
 
 
 def _validate_output(output: str, allowed: tuple[str, ...]) -> None:
@@ -260,6 +262,7 @@ def _query_loaded(
     return_all: bool = False,
     include_longer: bool = False,
     output: str = "objects",
+    indexed_records: QueryIndex | None = None,
 ) -> QueryResult | str:
     _validate_output(output, ("objects", "json", "csv"))
     logger.info("Querying geofeed source: %s query=%s", source, query)
@@ -276,6 +279,7 @@ def _query_loaded(
         query,
         return_all=return_all,
         include_longer=include_longer,
+        indexed_records=indexed_records,
     )
     if output == "objects":
         logger.debug(
@@ -359,12 +363,21 @@ def _info_loaded(
 class GeoFeed:
     """Main object-oriented API for geofeed workflows."""
 
-    def __init__(self, source: str, *, auto_load: bool = True):
+    def __init__(
+        self,
+        source: str,
+        *,
+        auto_load: bool = True,
+        cache_query_index: bool = True,
+    ):
         """Initialize a geofeed source and optionally load it immediately."""
         self.source = source
+        self._cache_query_index = cache_query_index
         self.raw: bytes | None = None
         self.content_type: str | None = None
         self.text: str | None = None
+        self._query_index_cache: QueryIndex | None = None
+        self._query_index_text: str | None = None
 
         if auto_load:
             self.reload()
@@ -377,6 +390,8 @@ class GeoFeed:
         self.content_type = content_type
         # Parser and normalizer behavior strips UTF-8 BOM before processing.
         self.text = decode_text(raw, strip_bom=True)
+        self._query_index_cache = None
+        self._query_index_text = None
         assert self.text is not None
         logger.debug(
             "Loaded geofeed source from %s: %s bytes=%d chars=%d content_type=%r",
@@ -469,6 +484,12 @@ class GeoFeed:
     ) -> QueryResult | str:
         """Query the source for an IP or prefix and return matching records."""
         _raw, text = self._ensure_loaded()
+        indexed_records: QueryIndex | None = None
+        if self._cache_query_index:
+            if self._query_index_cache is None or self._query_index_text != text:
+                self._query_index_cache = load_query_records(text)
+                self._query_index_text = text
+            indexed_records = self._query_index_cache
         return _query_loaded(
             self.source,
             text,
@@ -476,6 +497,7 @@ class GeoFeed:
             return_all=return_all,
             include_longer=include_longer,
             output=output,
+            indexed_records=indexed_records,
         )
 
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
