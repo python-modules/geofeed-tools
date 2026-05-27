@@ -6,7 +6,8 @@ from pathlib import Path
 
 import geofeed_tools.core as core_module
 import geofeed_tools.query as query_module
-from geofeed_tools import GeoFeed
+from geofeed_tools import GeoFeed, GeoFeedDiscoveryError
+from geofeed_tools.models import DoctorLookup, DoctorResult, QueryResult
 
 
 def fixture_path(name: str) -> str:
@@ -140,3 +141,79 @@ def test_query_cache_can_be_disabled(monkeypatch) -> None:
     assert not isinstance(first, str)
     assert not isinstance(second, str)
     assert call_count == 2
+
+
+def test_lookup_returns_query_result(monkeypatch) -> None:
+    """GeoFeed.lookup should return a QueryResult with matches from the discovered geofeed."""
+    record_stub = core_module.GeofeedRecord(prefix="203.0.113.0/24", country="US")
+
+    def fake_doctor_query(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
+        return DoctorResult(
+            query=query,
+            lookup=DoctorLookup(
+                lookup_strategy="ip-address",
+                rdap_method=rdap_method,
+                rdap_query=query,
+                bootstrap_url=f"https://rdap.org/ip/{query}",
+                geofeed_url="https://example.com/geofeed.csv",
+            ),
+            matches=(record_stub,),
+        )
+
+    monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
+
+    result = GeoFeed.lookup("203.0.113.1")
+
+    assert isinstance(result, QueryResult)
+    assert result.query == "203.0.113.1"
+    assert len(result.matches) == 1
+    assert result.matches[0].prefix == "203.0.113.0/24"
+
+
+def test_lookup_raises_when_no_geofeed(monkeypatch) -> None:
+    """GeoFeed.lookup should raise GeoFeedDiscoveryError when no geofeed URL is found."""
+
+    def fake_doctor_query(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
+        return DoctorResult(
+            query=query,
+            lookup=DoctorLookup(
+                lookup_strategy="ip-address",
+                rdap_method=rdap_method,
+                rdap_query=query,
+                bootstrap_url=f"https://rdap.org/ip/{query}",
+            ),
+            matches=(),
+        )
+
+    monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
+
+    import pytest
+    with pytest.raises(GeoFeedDiscoveryError) as exc_info:
+        GeoFeed.lookup("203.0.113.1")
+    assert exc_info.value.query == "203.0.113.1"
+
+
+def test_lookup_json_output(monkeypatch) -> None:
+    """GeoFeed.lookup with output='json' should return a JSON string."""
+    record_stub = core_module.GeofeedRecord(prefix="203.0.113.0/24", country="US")
+
+    def fake_doctor_query(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
+        return DoctorResult(
+            query=query,
+            lookup=DoctorLookup(
+                lookup_strategy="ip-address",
+                rdap_method=rdap_method,
+                rdap_query=query,
+                bootstrap_url=f"https://rdap.org/ip/{query}",
+                geofeed_url="https://example.com/geofeed.csv",
+            ),
+            matches=(record_stub,),
+        )
+
+    monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
+
+    payload = GeoFeed.lookup("203.0.113.1", output="json")
+
+    assert isinstance(payload, str)
+    assert '"query": "203.0.113.1"' in payload
+    assert '"prefix": "203.0.113.0/24"' in payload

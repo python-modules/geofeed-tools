@@ -8,9 +8,9 @@ from pathlib import Path
 
 from tabulate import tabulate
 
-from geofeed_tools import GeoFeed
+from geofeed_tools import GeoFeed, GeoFeedDiscoveryError, QueryResult
 from geofeed_tools.doctor import render_doctor_text
-from geofeed_tools.io_utils import doctor_to_json, report_to_json
+from geofeed_tools.io_utils import doctor_to_json, query_to_json, records_to_csv, report_to_json
 from geofeed_tools.logging import configure_cli_structlog
 from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport
 from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
@@ -53,6 +53,7 @@ def build_app():
     _register_normalize_command(app, typer)
     _register_query_command(app, typer)
     _register_doctor_command(app, typer)
+    _register_lookup_command(app, typer)
     _register_info_command(app, typer)
     _register_hook_command(app, typer)
     return app
@@ -343,6 +344,64 @@ def _register_doctor_command(app, typer) -> None:
 
         if result.lookup.geofeed_url is None or not result.matches:
             raise typer.Exit(code=1)
+
+
+def _register_lookup_command(app, typer) -> None:
+    """Register the lookup command."""
+
+    @app.command("lookup")
+    def lookup_command(
+        query: str,
+        show_all: bool = typer.Option(False, "--all", help="Show all matches"),
+        include_longer: bool = typer.Option(
+            False,
+            "--longer",
+            help="Include more-specific prefixes contained by the query",
+        ),
+        rdap_method: RdapMethod = typer.Option(
+            RdapMethod.RDAP_ORG,
+            "--rdap-method",
+            help="RDAP lookup method: rdap.org (default) or iana-bootstrap",
+        ),
+        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
+        verbose: int = typer.Option(
+            0,
+            "-v",
+            "--verbose",
+            count=True,
+            help=VERBOSE_HELP,
+        ),
+    ) -> None:
+        """Discover a published geofeed via RDAP and query it by IP or prefix."""
+        configure_cli_structlog(verbose)
+        try:
+            result = GeoFeed.lookup(
+                query,
+                return_all=show_all,
+                include_longer=include_longer,
+                rdap_method=rdap_method,
+                output="objects",
+            )
+        except GeoFeedDiscoveryError as exc:
+            print(str(exc), file=sys.stderr)
+            raise typer.Exit(code=1) from exc
+        assert isinstance(result, QueryResult)
+
+        if json_output:
+            print(query_to_json(result))
+            if not result.matches:
+                raise typer.Exit(code=1)
+            return
+
+        csv_output = records_to_csv(list(result.matches), include_validation=False)
+        if not csv_output.strip():
+            print(
+                f"no match for {query} in geofeed",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=1)
+
+        print(csv_output, end="")
 
 
 def _register_info_command(app, typer) -> None:

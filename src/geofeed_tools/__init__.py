@@ -5,6 +5,7 @@ from .core import GeoFeed
 from .models import (
     DoctorLookup,
     DoctorResult,
+    GeoFeedDiscoveryError,
     GeoFeedInfo,
     GeofeedRecord,
     QueryResult,
@@ -17,6 +18,7 @@ __all__ = [
     "DoctorLookup",
     "DoctorResult",
     "GeoFeed",
+    "GeoFeedDiscoveryError",
     "GeoFeedInfo",
     "GeofeedRecord",
     "QueryResult",

@@ -15,7 +15,7 @@ from .io_utils import (
 )
 from .loader import FetchError, decode_text, load_input, source_kind
 from .logging import TRACE_LEVEL, logger
-from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, GeoFeedDiscoveryError, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text
 from .query import load_query_records, query_text
@@ -409,6 +409,57 @@ def _doctor(
     return payload
 
 
+def _lookup(
+    query: str,
+    *,
+    return_all: bool = False,
+    include_longer: bool = False,
+    rdap_method: str = "rdap.org",
+    output: str = "objects",
+) -> QueryResult | str:
+    _validate_output(output, ("objects", "json", "csv"))
+    logger.info("Running lookup command for query=%s", query)
+    result = doctor_query(
+        query,
+        return_all=return_all,
+        include_longer=include_longer,
+        rdap_method=rdap_method,
+    )
+    if result.lookup.geofeed_url is None:
+        raise GeoFeedDiscoveryError(query)
+    query_result = QueryResult(query=result.query, matches=result.matches)
+    if output == "objects":
+        logger.debug(
+            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s",
+            query,
+            result.lookup.geofeed_url,
+            len(query_result.matches),
+            output,
+        )
+        return query_result
+    if output == "json":
+        payload = query_to_json(query_result)
+        logger.debug(
+            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(query_result.matches),
+            output,
+            len(payload),
+        )
+        return payload
+    payload = records_to_csv(list(query_result.matches), include_validation=False)
+    logger.debug(
+        "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+        query,
+        result.lookup.geofeed_url,
+        len(query_result.matches),
+        output,
+        len(payload),
+    )
+    return payload
+
+
 class GeoFeed:
     """Main object-oriented API for geofeed workflows."""
 
@@ -562,6 +613,27 @@ class GeoFeed:
             output=output,
         )
 
+    @staticmethod
+    def lookup(
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        rdap_method: str = "rdap.org",
+        output: str = "objects",
+    ) -> QueryResult | str:
+        """Discover a geofeed via RDAP and return query results for an IP or prefix.
+
+        Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
+        """
+        return _lookup(
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+            output=output,
+        )
+
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate statistics for the current geofeed source."""
         raw, text = self._ensure_loaded()
@@ -574,4 +646,4 @@ class GeoFeed:
         )
 
 
-__all__ = ["FetchError", "GeoFeed"]
+__all__ = ["FetchError", "GeoFeed", "GeoFeedDiscoveryError"]

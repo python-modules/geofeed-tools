@@ -13,11 +13,12 @@ from .core import (
     _validate_loaded,
 )
 from .doctor import doctor_query_async, render_doctor_text
-from .io_utils import doctor_to_json
+from .io_utils import doctor_to_json, query_to_json, records_to_csv
 from .loader import FetchError, decode_text, load_input_async, source_kind
 from .logging import TRACE_LEVEL, logger
 from .models import (
     DoctorResult,
+    GeoFeedDiscoveryError,
     GeoFeedInfo,
     GeofeedRecord,
     QueryResult,
@@ -192,6 +193,37 @@ class AsyncGeoFeed:
             return doctor_to_json(result)
         return render_doctor_text(result)
 
+    @staticmethod
+    async def lookup(
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        rdap_method: str = "rdap.org",
+        output: str = "objects",
+    ) -> QueryResult | str:
+        """Discover a geofeed via RDAP and return query results for an IP or prefix.
+
+        Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
+        """
+        if output not in {"objects", "json", "csv"}:
+            raise ValueError("output must be one of: objects, json, csv")
+
+        result = await doctor_query_async(
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+        )
+        if result.lookup.geofeed_url is None:
+            raise GeoFeedDiscoveryError(query)
+        query_result = QueryResult(query=result.query, matches=result.matches)
+        if output == "objects":
+            return query_result
+        if output == "json":
+            return query_to_json(query_result)
+        return records_to_csv(list(query_result.matches), include_validation=False)
+
     async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate geofeed statistics asynchronously."""
         raw, text = await self._ensure_loaded()
@@ -205,4 +237,4 @@ class AsyncGeoFeed:
         )
 
 
-__all__ = ["AsyncGeoFeed", "FetchError"]
+__all__ = ["AsyncGeoFeed", "FetchError", "GeoFeedDiscoveryError"]

@@ -178,3 +178,11 @@ class GeoFeedInfo:
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation of the info payload."""
         return asdict(self)
+
+
+class GeoFeedDiscoveryError(Exception):
+    """Raised when no geofeed URL can be discovered for a given query."""
+
+    def __init__(self, query: str) -> None:
+        super().__init__(f"no geofeed found for {query!r}")
+        self.query = query
