@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from geofeed_tools import DoctorLookup, GeoFeedDiscoveryError, GeofeedRecord, QueryResult
+from geofeed_tools import GeoFeedDiscoveryError, GeofeedRecord, QueryResult
 from geofeed_tools.cli.app import build_app
+from geofeed_tools.io_utils import query_to_json, records_to_csv
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -26,12 +27,14 @@ def _make_fake_geofeed(result: QueryResult | GeoFeedDiscoveryError):
             include_longer: bool = False,
             rdap_method: str = "rdap.org",
             output: str = "objects",
-        ) -> QueryResult:
+        ) -> str:
             del return_all, include_longer, rdap_method
-            assert output == "objects"
             if isinstance(result, GeoFeedDiscoveryError):
                 raise result
-            return result
+            if output == "json":
+                return query_to_json(result)
+            assert output == "csv"
+            return records_to_csv(result.matches, include_validation=False)
 
         # keep doctor available so other commands still work
         @staticmethod
@@ -116,10 +119,12 @@ def test_cli_lookup_accepts_rdap_method_override(monkeypatch) -> None:
             include_longer: bool = False,
             rdap_method: str = "rdap.org",
             output: str = "objects",
-        ) -> QueryResult:
+        ) -> str:
             del return_all, include_longer
             captured["rdap_method"] = rdap_method
-            return QueryResult(query=query, matches=(_SAMPLE_RECORD,))
+            if output == "json":
+                return query_to_json(QueryResult(query=query, matches=(_SAMPLE_RECORD,)))
+            return records_to_csv((_SAMPLE_RECORD,), include_validation=False)
 
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", CapturingFakeGeoFeed)
 
@@ -130,4 +135,3 @@ def test_cli_lookup_accepts_rdap_method_override(monkeypatch) -> None:
 
     assert outcome.exit_code == 0
     assert captured["rdap_method"] == "iana-bootstrap"
-

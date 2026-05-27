@@ -27,6 +27,38 @@ def _validate_output(output: str, allowed: tuple[str, ...]) -> None:
         raise ValueError(f"output must be one of: {', '.join(allowed)}")
 
 
+def _serialize_query_result(
+    result: QueryResult,
+    *,
+    output: str,
+) -> QueryResult | str:
+    _validate_output(output, ("objects", "json", "csv"))
+    if output == "objects":
+        return result
+    if output == "json":
+        return query_to_json(result)
+    return records_to_csv(result.matches, include_validation=False)
+
+
+def _serialize_doctor_result(
+    result: DoctorResult,
+    *,
+    output: str,
+) -> DoctorResult | str:
+    _validate_output(output, ("objects", "json", "text"))
+    if output == "objects":
+        return result
+    if output == "json":
+        return doctor_to_json(result)
+    return render_doctor_text(result)
+
+
+def _build_lookup_result(result: DoctorResult) -> QueryResult:
+    if result.lookup.geofeed_url is None:
+        raise GeoFeedDiscoveryError(result.query)
+    return QueryResult(query=result.query, matches=result.matches)
+
+
 def _build_parsed_records(
     source: str,
     raw: bytes,
@@ -265,7 +297,6 @@ def _query_loaded(
     output: str = "objects",
     indexed_records: QueryIndex | None = None,
 ) -> QueryResult | str:
-    _validate_output(output, ("objects", "json", "csv"))
     logger.info("Querying geofeed source: %s query=%s", source, query)
     logger.debug(
         "Query options: source=%s query=%s return_all=%s include_longer=%s output=%s",
@@ -282,6 +313,7 @@ def _query_loaded(
         include_longer=include_longer,
         indexed_records=indexed_records,
     )
+    serialized = _serialize_query_result(result, output=output)
     if output == "objects":
         logger.debug(
             "Query completed: source=%s query=%s matches=%d output=%s",
@@ -290,9 +322,10 @@ def _query_loaded(
             len(result.matches),
             output,
         )
-        return result
+        return serialized
+    payload = serialized
+    assert isinstance(payload, str)
     if output == "json":
-        payload = query_to_json(result)
         logger.debug(
             "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
             source,
@@ -301,16 +334,15 @@ def _query_loaded(
             output,
             len(payload),
         )
-        return payload
-    payload = records_to_csv(result.matches, include_validation=False)
-    logger.debug(
-        "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
-        source,
-        query,
-        len(result.matches),
-        output,
-        len(payload),
-    )
+    else:
+        logger.debug(
+            "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
+            source,
+            query,
+            len(result.matches),
+            output,
+            len(payload),
+        )
     return payload
 
 
@@ -369,7 +401,6 @@ def _doctor(
     rdap_method: str = "rdap.org",
     output: str = "objects",
 ) -> DoctorResult | str:
-    _validate_output(output, ("objects", "json", "text"))
     logger.info("Running doctor command for query=%s", query)
     result = doctor_query(
         query,
@@ -377,6 +408,7 @@ def _doctor(
         include_longer=include_longer,
         rdap_method=rdap_method,
     )
+    serialized = _serialize_doctor_result(result, output=output)
     if output == "objects":
         logger.debug(
             "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s",
@@ -385,9 +417,10 @@ def _doctor(
             len(result.matches),
             output,
         )
-        return result
+        return serialized
+    payload = serialized
+    assert isinstance(payload, str)
     if output == "json":
-        payload = doctor_to_json(result)
         logger.debug(
             "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
             query,
@@ -396,16 +429,15 @@ def _doctor(
             output,
             len(payload),
         )
-        return payload
-    payload = render_doctor_text(result)
-    logger.debug(
-        "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-        query,
-        result.lookup.geofeed_url,
-        len(result.matches),
-        output,
-        len(payload),
-    )
+    else:
+        logger.debug(
+            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(result.matches),
+            output,
+            len(payload),
+        )
     return payload
 
 
@@ -417,7 +449,6 @@ def _lookup(
     rdap_method: str = "rdap.org",
     output: str = "objects",
 ) -> QueryResult | str:
-    _validate_output(output, ("objects", "json", "csv"))
     logger.info("Running lookup command for query=%s", query)
     result = doctor_query(
         query,
@@ -425,9 +456,8 @@ def _lookup(
         include_longer=include_longer,
         rdap_method=rdap_method,
     )
-    if result.lookup.geofeed_url is None:
-        raise GeoFeedDiscoveryError(query)
-    query_result = QueryResult(query=result.query, matches=result.matches)
+    query_result = _build_lookup_result(result)
+    serialized = _serialize_query_result(query_result, output=output)
     if output == "objects":
         logger.debug(
             "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s",
@@ -436,9 +466,10 @@ def _lookup(
             len(query_result.matches),
             output,
         )
-        return query_result
+        return serialized
+    payload = serialized
+    assert isinstance(payload, str)
     if output == "json":
-        payload = query_to_json(query_result)
         logger.debug(
             "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
             query,
@@ -447,16 +478,15 @@ def _lookup(
             output,
             len(payload),
         )
-        return payload
-    payload = records_to_csv(list(query_result.matches), include_validation=False)
-    logger.debug(
-        "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-        query,
-        result.lookup.geofeed_url,
-        len(query_result.matches),
-        output,
-        len(payload),
-    )
+    else:
+        logger.debug(
+            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(query_result.matches),
+            output,
+            len(payload),
+        )
     return payload
 
 

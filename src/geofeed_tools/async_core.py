@@ -6,14 +6,16 @@ import asyncio
 
 from ._query_cache import QueryIndexCache
 from .core import (
+    _build_lookup_result,
     _info_loaded,
     _normalize_loaded,
     _parse_loaded,
     _query_loaded,
+    _serialize_doctor_result,
+    _serialize_query_result,
     _validate_loaded,
 )
-from .doctor import doctor_query_async, render_doctor_text
-from .io_utils import doctor_to_json, query_to_json, records_to_csv
+from .doctor import doctor_query_async
 from .loader import FetchError, decode_text, load_input_async, source_kind
 from .logging import TRACE_LEVEL, logger
 from .models import (
@@ -178,20 +180,13 @@ class AsyncGeoFeed:
         output: str = "objects",
     ) -> DoctorResult | str:
         """Discover and query a published geofeed asynchronously via RDAP."""
-        if output not in {"objects", "json", "text"}:
-            raise ValueError("output must be one of: objects, json, text")
-
         result = await doctor_query_async(
             query,
             return_all=return_all,
             include_longer=include_longer,
             rdap_method=rdap_method,
         )
-        if output == "objects":
-            return result
-        if output == "json":
-            return doctor_to_json(result)
-        return render_doctor_text(result)
+        return _serialize_doctor_result(result, output=output)
 
     @staticmethod
     async def lookup(
@@ -206,23 +201,14 @@ class AsyncGeoFeed:
 
         Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
         """
-        if output not in {"objects", "json", "csv"}:
-            raise ValueError("output must be one of: objects, json, csv")
-
         result = await doctor_query_async(
             query,
             return_all=return_all,
             include_longer=include_longer,
             rdap_method=rdap_method,
         )
-        if result.lookup.geofeed_url is None:
-            raise GeoFeedDiscoveryError(query)
-        query_result = QueryResult(query=result.query, matches=result.matches)
-        if output == "objects":
-            return query_result
-        if output == "json":
-            return query_to_json(query_result)
-        return records_to_csv(list(query_result.matches), include_validation=False)
+        query_result = _build_lookup_result(result)
+        return _serialize_query_result(query_result, output=output)
 
     async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate geofeed statistics asynchronously."""

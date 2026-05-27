@@ -176,7 +176,6 @@ def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
 
 def test_async_lookup_returns_query_result(monkeypatch) -> None:
     """AsyncGeoFeed.lookup should return a QueryResult from the discovered geofeed."""
-    import geofeed_tools.async_core as async_core_mod
     from geofeed_tools.models import DoctorLookup, DoctorResult, GeofeedRecord, QueryResult
 
     record_stub = GeofeedRecord(prefix="203.0.113.0/24", country="US")

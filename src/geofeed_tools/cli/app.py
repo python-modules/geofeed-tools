@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from enum import StrEnum
 from pathlib import Path
 
 from tabulate import tabulate
 
-from geofeed_tools import GeoFeed, GeoFeedDiscoveryError, QueryResult
+from geofeed_tools import GeoFeed, GeoFeedDiscoveryError
 from geofeed_tools.doctor import render_doctor_text
-from geofeed_tools.io_utils import doctor_to_json, query_to_json, records_to_csv, report_to_json
+from geofeed_tools.io_utils import doctor_to_json, report_to_json
 from geofeed_tools.logging import configure_cli_structlog
 from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport
 from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
@@ -87,6 +88,27 @@ def _render_dump_table(
     if include_validation:
         headers.extend(["Valid", "Validation messages"])
     return tabulate(rows, headers=headers, tablefmt="github")
+
+
+def _emit_query_payload(
+    payload: str,
+    *,
+    output: str,
+    query: str,
+    empty_source: str,
+    fail_on_empty_json: bool,
+    typer,
+) -> None:
+    if output == "csv":
+        if not payload.strip():
+            print(f"no match for {query} in {empty_source}", file=sys.stderr)
+            raise typer.Exit(code=1)
+        print(payload, end="")
+        return
+
+    print(payload)
+    if fail_on_empty_json and not json.loads(payload)["matches"]:
+        raise typer.Exit(code=1)
 
 
 def _register_dump_command(app, typer) -> None:
@@ -287,19 +309,21 @@ def _register_query_command(app, typer) -> None:
         geofeed = GeoFeed(source, cache_query_index=False)
 
         output = "json" if json_output else "csv"
-        result = geofeed.query(
+        payload = geofeed.query(
             query,
             return_all=show_all,
             include_longer=include_longer,
             output=output,
         )
-        assert isinstance(result, str)
-
-        if output == "csv" and not result.strip():
-            print(f"no match for {query} in {source}", file=sys.stderr)
-            raise typer.Exit(code=1)
-
-        print(result, end="" if output == "csv" else "\n")
+        assert isinstance(payload, str)
+        _emit_query_payload(
+            payload,
+            output=output,
+            query=query,
+            empty_source=source,
+            fail_on_empty_json=False,
+            typer=typer,
+        )
 
 
 def _register_doctor_command(app, typer) -> None:
@@ -374,34 +398,27 @@ def _register_lookup_command(app, typer) -> None:
     ) -> None:
         """Discover a published geofeed via RDAP and query it by IP or prefix."""
         configure_cli_structlog(verbose)
+        output = "json" if json_output else "csv"
         try:
-            result = GeoFeed.lookup(
+            payload = GeoFeed.lookup(
                 query,
                 return_all=show_all,
                 include_longer=include_longer,
                 rdap_method=rdap_method,
-                output="objects",
+                output=output,
             )
         except GeoFeedDiscoveryError as exc:
             print(str(exc), file=sys.stderr)
             raise typer.Exit(code=1) from exc
-        assert isinstance(result, QueryResult)
-
-        if json_output:
-            print(query_to_json(result))
-            if not result.matches:
-                raise typer.Exit(code=1)
-            return
-
-        csv_output = records_to_csv(list(result.matches), include_validation=False)
-        if not csv_output.strip():
-            print(
-                f"no match for {query} in geofeed",
-                file=sys.stderr,
-            )
-            raise typer.Exit(code=1)
-
-        print(csv_output, end="")
+        assert isinstance(payload, str)
+        _emit_query_payload(
+            payload,
+            output=output,
+            query=query,
+            empty_source="discovered geofeed",
+            fail_on_empty_json=True,
+            typer=typer,
+        )
 
 
 def _register_info_command(app, typer) -> None:
