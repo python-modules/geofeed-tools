@@ -12,7 +12,6 @@ from .validate import validate_bytes
 
 def parse_text(text: str) -> list[GeofeedRecord]:
     """Parse text into geofeed records, skipping malformed rows."""
-
     records: list[GeofeedRecord] = []
     for lineno, data in iter_data_lines(text):
         try:
@@ -43,7 +42,6 @@ def annotate_validity(
     content_type: str | None,
 ) -> list[GeofeedRecord]:
     """Annotate parsed records with error-derived validity flags."""
-
     report = validate_bytes(
         raw,
         source,

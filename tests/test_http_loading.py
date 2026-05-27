@@ -35,7 +35,6 @@ HTTP_SOURCES = [
 @pytest.mark.parametrize("url", HTTP_SOURCES)
 def test_http_parse_returns_records(url: str) -> None:
     """Each public geofeed URL should parse into a non-empty record list."""
-
     geofeed = GeoFeed(url)
     records = geofeed.parse(output="objects")
     assert isinstance(records, list)
@@ -73,7 +72,6 @@ def test_http_parse_returns_records(url: str) -> None:
 )
 def test_http_info_totals(url: str) -> None:
     """Info totals should be consistent with parsed record counts."""
-
     geofeed = GeoFeed(url)
     info = geofeed.info(output="objects")
     assert not isinstance(info, str)
@@ -89,7 +87,6 @@ def test_http_validate_returns_report(url: str) -> None:
     We do not assert errors == 0 because public third-party feeds may contain
     real RFC 8805 violations that are outside our control.
     """
-
     geofeed = GeoFeed(url)
     report = geofeed.validate(output="objects")
     assert not isinstance(report, str)

@@ -11,9 +11,9 @@ from .models import (
 
 __all__ = [
     "GeoFeed",
+    "GeoFeedInfo",
     "GeofeedRecord",
+    "QueryResult",
     "ValidationIssue",
     "ValidationReport",
-    "GeoFeedInfo",
-    "QueryResult",
 ]

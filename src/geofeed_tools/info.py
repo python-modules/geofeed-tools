@@ -13,7 +13,6 @@ def build_info(
     report: ValidationReport | None = None,
 ) -> GeoFeedInfo:
     """Build aggregate geofeed statistics from records and validation."""
-
     unique_prefixes = {record.prefix for record in records}
 
     ipv4 = 0

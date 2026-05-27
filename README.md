@@ -30,6 +30,24 @@ Install development dependencies:
 uv pip install 'geofeed-tools[dev]'
 ```
 
+## Releasing to PyPI
+
+Publishing runs from `.github/workflows/publish-to-pypi.yml` whenever a GitHub
+release is published.
+
+The workflow uses PyPI trusted publishing via GitHub OIDC, so no
+`PYPI_API_TOKEN` repository secret is required. To enable publishing, register
+`geofeed-tools` on PyPI with a trusted publisher that matches:
+
+- owner: `python-modules`
+- repository: `geofeed-tools`
+- workflow: `publish-to-pypi.yml`
+- environment: `pypi`
+
+After that is configured in PyPI, publishing a GitHub release will run the
+quality gate, build the sdist and wheel, validate them with `twine check`, and
+upload them to PyPI automatically.
+
 ## Python API Quick Start
 
 ```python

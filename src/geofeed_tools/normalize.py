@@ -16,7 +16,6 @@ def parse_for_normalize(
     text: str,
 ) -> list[tuple[Network, str, str, str, str, int]]:
     """Parse text into normalization-ready tuples."""
-
     records: list[tuple[Network, str, str, str, str, int]] = []
     for lineno, data in iter_data_lines(text):
         try:
@@ -44,7 +43,6 @@ def normalize_records(
     fix_host_bits: bool = True,
 ) -> list[GeofeedRecord]:
     """Normalize geofeed rows using transform toggles."""
-
     parsed = _parse_and_fix(
         text,
         uppercase=uppercase,
@@ -56,10 +54,7 @@ def normalize_records(
     elif dedupe:
         emitted = _dedupe(parsed)
     else:
-        emitted = [
-            (network, country, region, city, postal)
-            for network, country, region, city, postal, _ in parsed
-        ]
+        emitted = [(network, country, region, city, postal) for network, country, region, city, postal, _ in parsed]
 
     if sort:
         emitted = sorted(
@@ -86,7 +81,6 @@ def _parse_and_fix(
     fix_host_bits: bool,
 ) -> list[tuple[Network, str, str, str, str, int]]:
     """Parse and normalize individual records with optional host-bit fixes."""
-
     records: list[tuple[Network, str, str, str, str, int]] = []
     for lineno, data in iter_data_lines(text):
         parsed = _parse_line(data)
@@ -107,7 +101,6 @@ def _parse_and_fix(
 
 def _parse_line(data: str) -> list[str] | None:
     """Parse and normalize one CSV data line."""
-
     try:
         fields = parse_record(data)
     except csv.Error:
@@ -123,7 +116,6 @@ def _parse_network(
     fix_host_bits: bool,
 ) -> Network | None:
     """Parse a prefix and optionally normalize host bits."""
-
     network: Network | None = None
     try:
         network = ipaddress.ip_network(prefix, strict=True)
@@ -142,7 +134,6 @@ def _normalize_case(
     uppercase: bool,
 ) -> tuple[str, str]:
     """Normalize country/region casing when enabled."""
-
     if not uppercase:
         return country, region
     return (
@@ -155,16 +146,9 @@ def _aggregate(
     records: list[tuple[Network, str, str, str, str, int]],
 ) -> list[tuple[Network, str, str, str, str]]:
     """Aggregate collapsible prefixes per identical metadata tuple."""
-
-    by_key: dict[tuple, list[tuple[Network, int]]] = (
-        collections.defaultdict(list)
-    )
+    by_key: dict[tuple, list[tuple[Network, int]]] = collections.defaultdict(list)
     for network, country, region, city, postal, lineno in records:
-        by_key[
-            (_network_version(network), country, region, city, postal)
-        ].append(
-            (network, lineno)
-        )
+        by_key[(_network_version(network), country, region, city, postal)].append((network, lineno))
 
     out: list[tuple[Network, str, str, str, str]] = []
     for (_version, country, region, city, postal), entries in by_key.items():
@@ -177,25 +161,19 @@ def _aggregate(
 
 def _network_version(network: Network) -> int:
     """Return network IP version as integer."""
-
     return 4 if isinstance(network, ipaddress.IPv4Network) else 6
 
 
 def _collapse_same_version(networks: list[Network]) -> list[Network]:
     """Collapse networks that are known to share the same IP version."""
-
     if not networks:
         return []
 
     if isinstance(networks[0], ipaddress.IPv4Network):
-        ipv4_nets = [
-            net for net in networks if isinstance(net, ipaddress.IPv4Network)
-        ]
+        ipv4_nets = [net for net in networks if isinstance(net, ipaddress.IPv4Network)]
         return list(ipaddress.collapse_addresses(ipv4_nets))
 
-    ipv6_nets = [
-        net for net in networks if isinstance(net, ipaddress.IPv6Network)
-    ]
+    ipv6_nets = [net for net in networks if isinstance(net, ipaddress.IPv6Network)]
     return list(ipaddress.collapse_addresses(ipv6_nets))
 
 
@@ -203,7 +181,6 @@ def _dedupe(
     records: list[tuple[Network, str, str, str, str, int]],
 ) -> list[tuple[Network, str, str, str, str]]:
     """Drop exact duplicate network+metadata entries."""
-
     seen: set[tuple[Network, str, str, str, str]] = set()
     out: list[tuple[Network, str, str, str, str]] = []
 

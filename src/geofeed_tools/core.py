@@ -26,6 +26,7 @@ class GeoFeed:
     _ERR_OUTPUT_JSON_ONLY = "output must be one of: objects, json"
 
     def __init__(self, source: str, *, auto_load: bool = True):
+        """Initialize a geofeed source and optionally load it immediately."""
         self.source = source
         self.raw: bytes | None = None
         self.content_type: str | None = None
@@ -34,7 +35,13 @@ class GeoFeed:
         if auto_load:
             self.reload()
 
+    @staticmethod
+    def _validate_output(output: str, allowed: tuple[str, ...]) -> None:
+        if output not in allowed:
+            raise ValueError(f"output must be one of: {', '.join(allowed)}")
+
     def reload(self) -> None:
+        """Reload the source bytes and decoded text from disk or HTTP."""
         raw, content_type = load_input(self.source)
         self.raw = raw
         self.content_type = content_type
@@ -55,6 +62,8 @@ class GeoFeed:
         normalize: bool = False,
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
+        """Parse the source into records and optionally serialize the result."""
+        self._validate_output(output, ("objects", "json", "csv"))
         raw, text = self._ensure_loaded()
         if normalize:
             records = normalize_records(text)
@@ -76,12 +85,10 @@ class GeoFeed:
                 records,
                 include_validation=include_validation,
             )
-        if output == "csv":
-            return records_to_csv(
-                records,
-                include_validation=include_validation,
-            )
-        raise ValueError(self._ERR_OUTPUT_JSON_CSV)
+        return records_to_csv(
+            records,
+            include_validation=include_validation,
+        )
 
     def validate(
         self,
@@ -91,6 +98,8 @@ class GeoFeed:
         check_aggregation: bool = False,
         output: str = "objects",
     ) -> ValidationReport | str:
+        """Validate the source bytes and optionally serialize the report."""
+        self._validate_output(output, ("objects", "json", "text"))
         raw, _text = self._ensure_loaded()
         report = validate_bytes(
             raw,
@@ -105,9 +114,7 @@ class GeoFeed:
             return report
         if output == "json":
             return report_to_json(report)
-        if output == "text":
-            return render_validation_text(report)
-        raise ValueError(self._ERR_OUTPUT_JSON_TEXT)
+        return render_validation_text(report)
 
     def normalize(
         self,
@@ -119,6 +126,8 @@ class GeoFeed:
         fix_host_bits: bool = True,
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
+        """Normalize records from the source and optionally serialize them."""
+        self._validate_output(output, ("objects", "json", "csv"))
         _raw, text = self._ensure_loaded()
         records = normalize_records(
             text,
@@ -133,9 +142,7 @@ class GeoFeed:
             return records
         if output == "json":
             return records_to_json(records, include_validation=False)
-        if output == "csv":
-            return records_to_csv(records, include_validation=False)
-        raise ValueError(self._ERR_OUTPUT_JSON_CSV)
+        return records_to_csv(records, include_validation=False)
 
     def query(
         self,
@@ -145,6 +152,8 @@ class GeoFeed:
         include_longer: bool = False,
         output: str = "objects",
     ) -> QueryResult | str:
+        """Query the source for an IP or prefix and return matching records."""
+        self._validate_output(output, ("objects", "json", "csv"))
         _raw, text = self._ensure_loaded()
         result = query_text(
             text,
@@ -157,14 +166,14 @@ class GeoFeed:
             return result
         if output == "json":
             return query_to_json(result)
-        if output == "csv":
-            return records_to_csv(
-                list(result.matches),
-                include_validation=False,
-            )
-        raise ValueError(self._ERR_OUTPUT_JSON_CSV)
+        return records_to_csv(
+            list(result.matches),
+            include_validation=False,
+        )
 
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
+        """Compute aggregate statistics for the current geofeed source."""
+        self._validate_output(output, ("objects", "json"))
         records = self.parse(include_validation=False, output="objects")
         assert isinstance(records, list)
         report = self.validate(output="objects")
@@ -173,9 +182,7 @@ class GeoFeed:
 
         if output == "objects":
             return info
-        if output == "json":
-            return info_to_json(info)
-        raise ValueError(self._ERR_OUTPUT_JSON_ONLY)
+        return info_to_json(info)
 
 
-__all__ = ["GeoFeed", "FetchError"]
+__all__ = ["FetchError", "GeoFeed"]

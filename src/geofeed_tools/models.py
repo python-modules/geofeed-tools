@@ -19,6 +19,27 @@ class GeofeedRecord:
     valid: bool = True
     validation_messages: tuple[str, ...] = ()
 
+    def as_dict(
+        self,
+        *,
+        include_validation: bool = True,
+        include_raw_line: bool = False,
+    ) -> dict[str, object]:
+        """Return a JSON-serializable representation of the record."""
+        data: dict[str, object] = {
+            "prefix": self.prefix,
+            "country": self.country,
+            "region": self.region,
+            "city": self.city,
+            "postal_code": self.postal_code,
+        }
+        if include_raw_line:
+            data["raw_line"] = self.raw_line
+        if include_validation:
+            data["valid"] = self.valid
+            data["validation_messages"] = list(self.validation_messages)
+        return data
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -31,11 +52,9 @@ class ValidationIssue:
     raw_line: str | None = None
 
     def format(self) -> str:
+        """Render the issue as a human-readable single-line message."""
         location = f"line {self.line}" if self.line is not None else "file"
-        return (
-            f"[{self.severity.upper()}] "
-            f"{location}: {self.code}: {self.message}"
-        )
+        return f"[{self.severity.upper()}] {location}: {self.code}: {self.message}"
 
 
 @dataclass(frozen=True)
@@ -50,6 +69,7 @@ class ValidationReport:
     issues: tuple[ValidationIssue, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation of the validation report."""
         return {
             "source": self.source,
             "records": self.records,
@@ -68,19 +88,10 @@ class QueryResult:
     matches: tuple[GeofeedRecord, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation of the query result."""
         return {
             "query": self.query,
-            "matches": [
-                {
-                    "prefix": record.prefix,
-                    "country": record.country,
-                    "region": record.region,
-                    "city": record.city,
-                    "postal_code": record.postal_code,
-                    "raw_line": record.raw_line,
-                }
-                for record in self.matches
-            ],
+            "matches": [record.as_dict(include_validation=False, include_raw_line=True) for record in self.matches],
         }
 
 
@@ -103,4 +114,5 @@ class GeoFeedInfo:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation of the info payload."""
         return asdict(self)

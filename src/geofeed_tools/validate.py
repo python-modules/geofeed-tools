@@ -27,18 +27,13 @@ class _ValidationState:
     def __init__(self) -> None:
         self.record_count = 0
         self.prev_by_version: dict[int, Network] = {}
-        self.records_for_aggregation: list[
-            tuple[Network, tuple[str, str, str, str], int]
-        ] = []
+        self.records_for_aggregation: list[tuple[Network, tuple[str, str, str, str], int]] = []
 
 
 def find_aggregations(
-    records: list[
-        tuple[Network, tuple[str, str, str, str], int]
-    ],
+    records: list[tuple[Network, tuple[str, str, str, str], int]],
 ) -> list[ValidationIssue]:
     """Return warnings for prefixes that can be merged safely."""
-
     issues: list[ValidationIssue] = []
     for net_to_lines in _aggregation_groups(records):
         for issue in _group_aggregation_issues(net_to_lines):
@@ -54,15 +49,10 @@ def find_aggregations(
 
 
 def _aggregation_groups(
-    records: list[
-        tuple[Network, tuple[str, str, str, str], int]
-    ],
+    records: list[tuple[Network, tuple[str, str, str, str], int]],
 ) -> list[dict[Network, list[int]]]:
     """Group records by version and geo metadata for aggregation checks."""
-
-    by_key: dict[tuple, list[tuple[Network, int]]] = (
-        collections.defaultdict(list)
-    )
+    by_key: dict[tuple, list[tuple[Network, int]]] = collections.defaultdict(list)
     for network, metadata, lineno in records:
         by_key[(_network_version(network), metadata)].append((network, lineno))
 
@@ -80,7 +70,6 @@ def _group_aggregation_issues(
     net_to_lines: dict[Network, list[int]],
 ) -> list[ValidationIssue]:
     """Build aggregation warnings for one metadata-equivalent group."""
-
     unique = list(net_to_lines.keys())
     collapsed = _collapse_same_version(unique)
     issues: list[ValidationIssue] = []
@@ -103,7 +92,6 @@ def _contributors_for_supernet(
     supernet: Network,
 ) -> list[tuple[Network, int]]:
     """Return prefixes and source lines contained by a candidate supernet."""
-
     contributors: list[tuple[Network, int]] = []
     for original in unique:
         if not _network_subnet_of(original, supernet):
@@ -118,7 +106,6 @@ def _aggregation_issue(
     supernet: Network,
 ) -> ValidationIssue:
     """Build one aggregatable warning from contributors."""
-
     parts = ", ".join(f"{net} (line {line})" for net, line in contributors)
     return ValidationIssue(
         severity="warning",
@@ -130,13 +117,11 @@ def _aggregation_issue(
 
 def _network_version(network: Network) -> int:
     """Return network IP version as integer."""
-
     return 4 if isinstance(network, ipaddress.IPv4Network) else 6
 
 
 def _network_subnet_of(candidate: Network, container: Network) -> bool:
     """Check subnet relation while preserving type safety across families."""
-
     if isinstance(candidate, ipaddress.IPv4Network) and isinstance(
         container,
         ipaddress.IPv4Network,
@@ -152,7 +137,6 @@ def _network_subnet_of(candidate: Network, container: Network) -> bool:
 
 def _network_lt(left: Network, right: Network) -> bool:
     """Compare two same-family networks for ordering."""
-
     if isinstance(left, ipaddress.IPv4Network) and isinstance(
         right,
         ipaddress.IPv4Network,
@@ -168,19 +152,14 @@ def _network_lt(left: Network, right: Network) -> bool:
 
 def _collapse_same_version(unique: list[Network]) -> list[Network]:
     """Collapse a same-version network list with stable typing."""
-
     if not unique:
         return []
 
     if isinstance(unique[0], ipaddress.IPv4Network):
-        ipv4_nets = [
-            net for net in unique if isinstance(net, ipaddress.IPv4Network)
-        ]
+        ipv4_nets = [net for net in unique if isinstance(net, ipaddress.IPv4Network)]
         return list(ipaddress.collapse_addresses(ipv4_nets))
 
-    ipv6_nets = [
-        net for net in unique if isinstance(net, ipaddress.IPv6Network)
-    ]
+    ipv6_nets = [net for net in unique if isinstance(net, ipaddress.IPv6Network)]
     return list(ipaddress.collapse_addresses(ipv6_nets))
 
 
@@ -194,7 +173,6 @@ def validate_bytes(
     check_aggregation: bool = False,
 ) -> ValidationReport:
     """Validate geofeed bytes and return a structured report."""
-
     issues: list[ValidationIssue] = []
     _add_content_type_issue(
         issues,
@@ -224,9 +202,7 @@ def validate_bytes(
     if text is not None:
         line_map = dict(enumerate(text.splitlines(), start=1))
         issues = [
-            dataclasses.replace(issue, raw_line=line_map.get(issue.line))
-            if issue.line is not None
-            else issue
+            dataclasses.replace(issue, raw_line=line_map.get(issue.line)) if issue.line is not None else issue
             for issue in issues
         ]
 
@@ -250,10 +226,7 @@ def _add_content_type_issue(
             severity="warning",
             line=None,
             code="content-type",
-            message=(
-                f"Content-Type is {content_type!r}; "
-                "RFC 8805 recommends text/csv"
-            ),
+            message=(f"Content-Type is {content_type!r}; RFC 8805 recommends text/csv"),
         )
     )
 
@@ -273,18 +246,13 @@ def _decode_for_validation(
             )
         )
         raw = raw[3:]
-    elif raw.startswith(
-        (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff", b"\xff\xfe\x00\x00")
-    ):
+    elif raw.startswith((b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff", b"\xff\xfe\x00\x00")):
         issues.append(
             ValidationIssue(
                 severity="error",
                 line=1,
                 code="bom",
-                message=(
-                    "File starts with a UTF-16/32 BOM; "
-                    "RFC 8805 requires UTF-8"
-                ),
+                message=("File starts with a UTF-16/32 BOM; RFC 8805 requires UTF-8"),
             )
         )
         return None
@@ -297,10 +265,7 @@ def _decode_for_validation(
                 severity="error",
                 line=exc.start,
                 code="encoding",
-                message=(
-                    f"File is not valid UTF-8 at byte {exc.start}: "
-                    f"{exc.reason}"
-                ),
+                message=(f"File is not valid UTF-8 at byte {exc.start}: {exc.reason}"),
             )
         )
         return None
@@ -329,9 +294,7 @@ def _validate_data_line(
     _apply_sort_check(lineno, network, issues, state, check_sort)
 
     if check_aggregation:
-        state.records_for_aggregation.append(
-            (network, (country_norm, region_norm, city, postal), lineno)
-        )
+        state.records_for_aggregation.append((network, (country_norm, region_norm, city, postal), lineno))
 
 
 def _parse_fields(
@@ -359,10 +322,7 @@ def _parse_fields(
                 severity="error",
                 line=lineno,
                 code="too-many-fields",
-                message=(
-                    f"Expected at most {MAX_FIELDS} fields, "
-                    f"got {len(fields)}"
-                ),
+                message=(f"Expected at most {MAX_FIELDS} fields, got {len(fields)}"),
             )
         )
     return normalize_fields(fields)
@@ -442,10 +402,7 @@ def _validate_country(
                     severity="error",
                     line=lineno,
                     code="missing-country",
-                    message=(
-                        "Country code is required when "
-                        "region/city/postal-code is present"
-                    ),
+                    message=("Country code is required when region/city/postal-code is present"),
                 )
             )
         return ""
@@ -457,10 +414,7 @@ def _validate_country(
                 severity="warning",
                 line=lineno,
                 code="country-case",
-                message=(
-                    f"Country code {country!r} should be "
-                    f"uppercase ({country_norm!r})"
-                ),
+                message=(f"Country code {country!r} should be uppercase ({country_norm!r})"),
             )
         )
 
@@ -472,10 +426,7 @@ def _validate_country(
             severity="error",
             line=lineno,
             code="invalid-country",
-            message=(
-                "Unknown ISO 3166-1 alpha-2 country "
-                f"code {country!r}"
-            ),
+            message=(f"Unknown ISO 3166-1 alpha-2 country code {country!r}"),
         )
     )
     return ""
@@ -498,10 +449,7 @@ def _validate_region(
                 severity="warning",
                 line=lineno,
                 code="region-case",
-                message=(
-                    f"Region code {region!r} should be "
-                    f"uppercase ({region_norm!r})"
-                ),
+                message=(f"Region code {region!r} should be uppercase ({region_norm!r})"),
             )
         )
 
@@ -512,10 +460,7 @@ def _validate_region(
                 severity="error",
                 line=lineno,
                 code="invalid-region",
-                message=(
-                    "Unknown ISO 3166-2 subdivision code "
-                    f"{region!r}"
-                ),
+                message=(f"Unknown ISO 3166-2 subdivision code {region!r}"),
             )
         )
         return region_norm
@@ -526,11 +471,7 @@ def _validate_region(
                 severity="error",
                 line=lineno,
                 code="region-country-mismatch",
-                message=(
-                    f"Region {region_norm!r} belongs to "
-                    f"{subdivision.country_code!r}, not "
-                    f"{country_norm!r}"
-                ),
+                message=(f"Region {region_norm!r} belongs to {subdivision.country_code!r}, not {country_norm!r}"),
             )
         )
     return region_norm
@@ -554,10 +495,7 @@ def _apply_sort_check(
                 severity="warning",
                 line=lineno,
                 code="unsorted",
-                message=(
-                    f"Prefix {network} appears after {previous}; "
-                    "RFC 8805 says records SHOULD be sorted"
-                ),
+                message=(f"Prefix {network} appears after {previous}; RFC 8805 says records SHOULD be sorted"),
             )
         )
     state.prev_by_version[version] = network
@@ -569,7 +507,6 @@ def _report_from_issues(
     issues: list[ValidationIssue],
 ) -> ValidationReport:
     """Build a ValidationReport with computed error and warning counts."""
-
     errors = sum(1 for issue in issues if issue.severity == "error")
     warnings = sum(1 for issue in issues if issue.severity == "warning")
     return ValidationReport(
@@ -584,7 +521,6 @@ def _report_from_issues(
 
 def render_validation_text(report: ValidationReport) -> str:
     """Render a human-readable validation report."""
-
     lines = [f"source: {report.source}", f"records: {report.records}"]
     if not report.issues:
         lines.append("no issues found")
@@ -593,7 +529,5 @@ def render_validation_text(report: ValidationReport) -> str:
     lines.append("")
     lines.extend(issue.format() for issue in report.issues)
     lines.append("")
-    lines.append(
-        f"summary: {report.errors} error(s), {report.warnings} warning(s)"
-    )
+    lines.append(f"summary: {report.errors} error(s), {report.warnings} warning(s)")
     return "\n".join(lines)

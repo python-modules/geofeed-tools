@@ -13,7 +13,6 @@ Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 def parse_query(query: str) -> Network:
     """Parse an IP or CIDR query into a network object."""
-
     return ipaddress.ip_network(query, strict=False)
 
 
@@ -21,7 +20,6 @@ def load_query_records(
     text: str,
 ) -> list[tuple[Network, GeofeedRecord]]:
     """Load queryable records and keep last occurrence per prefix."""
-
     last_by_prefix: dict[Network, GeofeedRecord] = {}
     line_map = dict(enumerate(text.splitlines(), start=1))
 
@@ -60,7 +58,6 @@ def find_matches(
     include_longer: bool = False,
 ) -> list[GeofeedRecord]:
     """Find matching geofeed records for a parsed query network."""
-
     matches: list[tuple[Network, GeofeedRecord]] = []
 
     for network, record in records:
@@ -77,13 +74,11 @@ def find_matches(
 
 def _network_version(network: Network) -> int:
     """Return network IP version as integer."""
-
     return 4 if isinstance(network, ipaddress.IPv4Network) else 6
 
 
 def _network_subnet_of(candidate: Network, container: Network) -> bool:
     """Check subnet relation while preserving family typing."""
-
     if isinstance(candidate, ipaddress.IPv4Network) and isinstance(
         container,
         ipaddress.IPv4Network,
@@ -105,7 +100,6 @@ def query_text(
     include_longer: bool = False,
 ) -> QueryResult:
     """Query a geofeed text payload and return matching records."""
-
     query_network = parse_query(query)
     records = load_query_records(text)
     matches = find_matches(

@@ -17,20 +17,15 @@ VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
 
 def _require_cli_deps():
     """Import Typer lazily to keep CLI deps optional."""
-
     try:
         import typer
     except ImportError as exc:
-        raise SystemExit(
-            "CLI dependencies are not installed. "
-            "Install with: uv pip install '.[cli]'"
-        ) from exc
+        raise SystemExit("CLI dependencies are not installed. Install with: uv pip install '.[cli]'") from exc
     return typer
 
 
 def build_app():
     """Build and return the Typer application."""
-
     typer = _require_cli_deps()
     app = typer.Typer(help="GeoFeed tools CLI")
     _register_dump_command(app, typer)
@@ -67,7 +62,6 @@ def _register_dump_command(app, typer) -> None:
         ),
     ) -> None:
         """Dump geofeed records as JSON objects."""
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         payload = geofeed.parse(
@@ -119,7 +113,6 @@ def _register_validate_command(app, typer) -> None:
         ),
     ) -> None:
         """Validate a geofeed source and report issues."""
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         validate_options = {
@@ -164,7 +157,6 @@ def _register_normalize_command(app, typer) -> None:
         ),
     ) -> None:
         """Normalize geofeed records and print or write canonical CSV."""
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         csv_payload = geofeed.normalize(
@@ -206,7 +198,6 @@ def _register_query_command(app, typer) -> None:
         ),
     ) -> None:
         """Query a geofeed by IP or prefix."""
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
 
@@ -242,7 +233,6 @@ def _register_info_command(app, typer) -> None:
         ),
     ) -> None:
         """Show geofeed statistics."""
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         output = "json" if json_output else "objects"
@@ -261,9 +251,7 @@ def _register_info_command(app, typer) -> None:
             ["IPv6 records", info.ipv6_records],
             ["Duplicates", info.duplicates],
         ]
-        print(
-            tabulate(record_rows, headers=["Records", ""], tablefmt="github")
-        )
+        print(tabulate(record_rows, headers=["Records", ""], tablefmt="github"))
 
         geo_rows: list[list[object]] = [
             ["Countries", info.unique_countries],
@@ -319,7 +307,6 @@ def _register_hook_command(app, typer) -> None:
         ),
     ) -> None:
         """Run validation and return hook-friendly exit codes."""
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         report = geofeed.validate(output="objects")
@@ -333,21 +320,16 @@ def _register_hook_command(app, typer) -> None:
 
         failed = report.errors > 0 or (strict and report.warnings > 0)
         if failed:
-            msg = (
-                f"hook: FAIL — {report.errors} error(s), "
-                f"{report.warnings} warning(s) in {source}"
-            )
+            msg = f"hook: FAIL — {report.errors} error(s), {report.warnings} warning(s) in {source}"
             typer.echo(msg, err=True)
             raise typer.Exit(code=1)
         typer.echo(
-            f"hook: OK — {report.records} record(s), "
-            f"{report.warnings} warning(s) in {source}",
+            f"hook: OK — {report.records} record(s), {report.warnings} warning(s) in {source}",
             err=True,
         )
 
 
 def main() -> None:
     """CLI entrypoint used by project scripts."""
-
     app = build_app()
     app()

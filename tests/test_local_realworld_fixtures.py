@@ -11,7 +11,6 @@ from geofeed_tools import GeoFeed
 
 def fixture_path(name: str) -> str:
     """Return absolute path to a fixture file by name."""
-
     return str(Path(__file__).parent / "fixtures" / name)
 
 
@@ -25,7 +24,6 @@ LOCAL_SOURCES = [
 @pytest.mark.parametrize("source", LOCAL_SOURCES)
 def test_local_fixture_parse_returns_records(source: str) -> None:
     """Downloaded fixtures should parse into non-empty record lists."""
-
     geofeed = GeoFeed(source)
     records = geofeed.parse(output="objects")
     assert isinstance(records, list)
@@ -53,7 +51,6 @@ def test_local_fixture_parse_returns_records(source: str) -> None:
 )
 def test_local_fixture_info_totals(source: str) -> None:
     """Info totals should be internally consistent for local fixtures."""
-
     geofeed = GeoFeed(source)
     info = geofeed.info(output="objects")
     assert not isinstance(info, str)
@@ -64,10 +61,7 @@ def test_local_fixture_info_totals(source: str) -> None:
 @pytest.mark.parametrize("source", LOCAL_SOURCES)
 def test_local_fixture_validate_returns_report(source: str) -> None:
     """Validation should complete and return a structured report."""
-
     geofeed = GeoFeed(source)
     report = geofeed.validate(output="objects")
     assert not isinstance(report, str)
-    assert report.records > 0, (
-        f"No records found in validation report for {source}"
-    )
+    assert report.records > 0, f"No records found in validation report for {source}"

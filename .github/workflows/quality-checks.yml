@@ -32,6 +32,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,cli]"
 
+      - name: Run Ruff lint checks
+        run: python -m ruff check src tests
+
+      - name: Run ty checks
+        run: python -m ty check src tests
+
       - name: Verify imports compile
         run: python -m compileall -q src tests
 

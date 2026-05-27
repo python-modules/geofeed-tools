@@ -15,7 +15,6 @@ logging.addLevelName(TRACE_LEVEL, "TRACE")
 
 def _verbosity_to_level(verbosity: int) -> int:
     """Map `-v` counts to stdlib log levels."""
-
     levels = (logging.WARNING, logging.INFO, logging.DEBUG, TRACE_LEVEL)
     index = min(max(verbosity, 0), 3)
     return levels[index]
@@ -23,7 +22,6 @@ def _verbosity_to_level(verbosity: int) -> int:
 
 def _enable_http_trace_logging() -> None:
     """Enable low-level HTTP diagnostics for trace verbosity."""
-
     import http.client
 
     http.client.HTTPConnection.debuglevel = 1
@@ -33,7 +31,6 @@ def _enable_http_trace_logging() -> None:
 
 def configure_logging(verbosity: int = 0) -> None:
     """Configure standard-library logging for core operations."""
-
     level = _verbosity_to_level(verbosity)
 
     handler = logging.StreamHandler(sys.stderr)
@@ -49,7 +46,6 @@ def configure_logging(verbosity: int = 0) -> None:
 
 def configure_cli_structlog(verbosity: int = 0) -> None:
     """Configure structlog console logging for the optional CLI."""
-
     # CLI dependencies are optional; import lazily to keep core module lean.
     import structlog
 

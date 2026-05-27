@@ -11,7 +11,6 @@ logger = logging.getLogger(LOGGER_NAME)
 
 def configure_logging(verbosity: int = 0) -> None:
     """Configure standard-library logging for core operations."""
-
     if verbosity <= 0:
         level = logging.WARNING
     elif verbosity == 1:

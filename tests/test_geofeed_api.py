@@ -9,13 +9,11 @@ from geofeed_tools import GeoFeed
 
 def fixture_path(name: str) -> str:
     """Return absolute path to a fixture file by name."""
-
     return str(Path(__file__).parent / "fixtures" / name)
 
 
 def test_parse_and_info() -> None:
     """Parse valid data and compute basic summary metrics."""
-
     geofeed = GeoFeed(fixture_path("valid_geofeed.csv"))
     records = geofeed.parse(output="objects")
     assert isinstance(records, list)
@@ -30,7 +28,6 @@ def test_parse_and_info() -> None:
 
 def test_validate_invalid_file() -> None:
     """Ensure invalid fixture returns one or more validation errors."""
-
     geofeed = GeoFeed(fixture_path("invalid_geofeed.csv"))
     report = geofeed.validate(output="objects")
     assert not isinstance(report, str)
@@ -39,7 +36,6 @@ def test_validate_invalid_file() -> None:
 
 def test_normalize_and_query_outputs() -> None:
     """Validate normalized CSV and query JSON output paths."""
-
     geofeed = GeoFeed(fixture_path("valid_geofeed.csv"))
 
     normalized_csv = geofeed.normalize(output="csv")
@@ -53,7 +49,6 @@ def test_normalize_and_query_outputs() -> None:
 
 def test_parse_with_normalize_option() -> None:
     """Parse supports optional normalization before serialization."""
-
     geofeed = GeoFeed(fixture_path("valid_geofeed.csv"))
 
     parsed = geofeed.parse(output="objects", include_validation=False)

@@ -17,6 +17,7 @@ class FetchError(Exception):
     """Raised when URL loading fails."""
 
     def __init__(self, source: str, *, status_code: int | None, reason: str):
+        """Initialize a fetch error with the originating source and cause."""
         self.source = source
         self.status_code = status_code
         self.reason = reason
@@ -29,13 +30,11 @@ class FetchError(Exception):
 
 def is_url(source: str) -> bool:
     """Return True when a source string looks like an HTTP URL."""
-
     return source.startswith(URL_SCHEMES)
 
 
 def load_input(source: str) -> tuple[bytes, str | None]:
     """Load raw bytes from a file path or HTTP(S) URL."""
-
     if is_url(source):
         return _fetch_urllib(source)
 
@@ -47,7 +46,6 @@ def load_input(source: str) -> tuple[bytes, str | None]:
 
 def _fetch_urllib(source: str) -> tuple[bytes, str | None]:
     """Fetch content via urllib fallback."""
-
     logger.info("fetching %s via urllib", source)
     headers = {"User-Agent": USER_AGENT, "Accept": "text/csv, */*"}
     request = urllib.request.Request(source, headers=headers)
@@ -89,7 +87,6 @@ def _fetch_urllib(source: str) -> tuple[bytes, str | None]:
 
 def decode_text(raw: bytes, *, strip_bom: bool = False) -> str:
     """Decode UTF-8 bytes and optionally strip UTF-8 BOM."""
-
     if raw.startswith(b"\xef\xbb\xbf") and strip_bom:
         raw = raw[3:]
     return raw.decode("utf-8")
