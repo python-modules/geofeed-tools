@@ -8,13 +8,17 @@ permissions:
   contents: read
 
 jobs:
+  config:
+    uses: ./.github/workflows/shared-config.yml
+
   python-quality:
+    needs: config
     name: Python Quality (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ${{ fromJSON(needs.config.outputs.python-versions) }}
 
     steps:
       - name: Checkout
