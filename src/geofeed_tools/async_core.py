@@ -73,7 +73,9 @@ class AsyncGeoFeed(_GeoFeedBase):
     ) -> list[GeofeedRecord] | str:
         """Parse the source asynchronously and optionally serialize the result."""
         await self._ensure_loaded()
-        return await asyncio.to_thread(self._do_parse, include_validation=include_validation, normalize=normalize, output=output)
+        return await asyncio.to_thread(
+            self._do_parse, include_validation=include_validation, normalize=normalize, output=output
+        )
 
     async def validate(
         self,
@@ -125,7 +127,9 @@ class AsyncGeoFeed(_GeoFeedBase):
     ) -> QueryResult | str:
         """Query the source asynchronously for an IP or prefix."""
         await self._ensure_loaded()
-        return await asyncio.to_thread(self._do_query, query, return_all=return_all, include_longer=include_longer, output=output)
+        return await asyncio.to_thread(
+            self._do_query, query, return_all=return_all, include_longer=include_longer, output=output
+        )
 
     @staticmethod
     async def doctor(
@@ -174,4 +178,3 @@ class AsyncGeoFeed(_GeoFeedBase):
 
 
 __all__ = ["AsyncGeoFeed", "FetchError", "GeoFeedDiscoveryError"]
-

@@ -38,6 +38,7 @@ def _check_cli_deps() -> None:
         )
         sys.exit(1)
 
+
 JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
 
