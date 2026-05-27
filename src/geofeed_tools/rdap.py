@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from .loader import ASYNC_HTTP_ERROR, FETCH_TIMEOUT, USER_AGENT, FetchError
 from .logging import logger
@@ -58,7 +59,8 @@ def _mapping_items(value: object) -> list[Mapping[str, object]]:
     """Return only mapping items from a list-like object."""
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    result: list[Mapping[str, object]] = [cast(Mapping[str, object], item) for item in value if isinstance(item, dict)]
+    return result
 
 
 def _string_items(value: object) -> list[str]:
