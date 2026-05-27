@@ -1,5 +1,5 @@
 # geofeed-tools Changelog
 
-## TBA - 0.1.0
+## 2026-05-26 - 0.1.0
 
 Initial release.
