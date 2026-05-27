@@ -8,6 +8,7 @@
 - Update GitHub actions workflows for packaging/code quality scans
 - Centralise all config/settings related values into `config.py`
 - Misc small fixups
+- Add check to CLI for requirements to ensure they are available
 
 ## 2026-05-26 - 0.1.1
 
