@@ -16,12 +16,15 @@
       - [`validate()`](#validate)
       - [`normalize()`](#normalize)
       - [`query()`](#query)
+      - [`doctor()`](#doctor)
       - [`info()`](#info)
     - [Public Data Models](#public-data-models)
       - [`GeofeedRecord`](#geofeedrecord)
       - [`ValidationIssue`](#validationissue)
       - [`ValidationReport`](#validationreport)
       - [`QueryResult`](#queryresult)
+      - [`DoctorLookup`](#doctorlookup)
+      - [`DoctorResult`](#doctorresult)
       - [`GeoFeedInfo`](#geofeedinfo)
     - [Error Handling](#error-handling)
   - [CLI Usage](#cli-usage)
@@ -32,6 +35,7 @@
       - [`dump`](#dump)
       - [`normalize`](#normalize-1)
       - [`query`](#query-1)
+      - [`doctor`](#doctor-1)
       - [`info`](#info-1)
       - [`hook`](#hook)
     - [GitHub Actions Integration](#github-actions-integration)
@@ -46,6 +50,7 @@
 - Validate geofeed quality and RFC 8805 compliance
 - Normalize records - ensure there are no duplicates, invalid prefixes (eg. host bits set), case is correct
 - Query geofeeds by searching for IPs or prefixes
+- Discover published geofeeds for an IP or prefix via RDAP and query the discovered feed
 - Use as either a Python API or a CLI
 - CLI hook command available for use in version control hooks or CI/CD tests
 
@@ -102,6 +107,9 @@ match_ip = geofeed.query("192.0.2.1")
 # Query a prefix and include all matching sub-prefixes
 all_matches = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True)
 
+# Discover the published geofeed for an address or prefix via RDAP
+diagnosis = GeoFeed.doctor("31.133.128.1")
+
 # Build a high-level summary
 summary = geofeed.info()
 ```
@@ -118,6 +126,9 @@ records = await geofeed.parse()
 report = await geofeed.validate(check_aggregation=True)
 summary = await geofeed.info()
 
+# RDAP-based discovery does not require constructing an instance first
+diagnosis = await AsyncGeoFeed.doctor("31.133.128.1")
+
 # Or eagerly load first with the async factory
 preloaded = await AsyncGeoFeed.from_source("https://api.cloudflare.com/local-ip-ranges.csv")
 ```
@@ -129,6 +140,8 @@ The top-level package exports the main API object plus the public dataclasses:
 ```python
 from geofeed_tools import (
   AsyncGeoFeed,
+  DoctorLookup,
+  DoctorResult,
 	GeoFeed,
 	GeoFeedInfo,
 	GeofeedRecord,
@@ -161,11 +174,13 @@ Available async methods:
 - `await validate(...) -> ValidationReport | str`
 - `await normalize(...) -> list[GeofeedRecord] | str`
 - `await query(...) -> QueryResult | str`
+- `await AsyncGeoFeed.doctor(...) -> DoctorResult | str`
 - `await info(...) -> GeoFeedInfo | str`
 
 Behavior notes:
 
 - `AsyncGeoFeed` accepts the same flags and output modes as `GeoFeed` for `parse()`, `validate()`, `normalize()`, `query()`, and `info()`.
+- `AsyncGeoFeed.doctor()` is a static async helper that performs RDAP discovery, fetches the published geofeed, and returns structured lookup metadata together with the geofeed matches.
 - Local file loading is performed asynchronously via thread offloading.
 - Remote URL loading uses async HTTP and requires the `geofeed-tools[async]` extra.
 - Parsing, validation, normalization, querying, and info generation run off the event loop in worker threads so library consumers can use the API without blocking the loop on large feeds.
@@ -329,6 +344,44 @@ Matching behavior:
 - `return_all=True` returns every match sorted from most specific to least specific.
 - `include_longer=True` also returns more-specific prefixes contained by the queried network.
 
+#### `doctor()`
+
+```python
+GeoFeed.doctor(
+  query: str,
+  *,
+  return_all: bool = False,
+  include_longer: bool = False,
+  rdap_method: str = "rdap.org",
+  output: str = "objects",
+) -> DoctorResult | str
+```
+
+Discover a published geofeed for an IP address or prefix via RDAP, fetch that geofeed, and query it.
+
+| Argument | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `query` | `str` | required | IP address or CIDR prefix to diagnose. |
+| `return_all` | `bool` | `False` | Return every matching geofeed row instead of only the most specific one. |
+| `include_longer` | `bool` | `False` | When the query is a prefix, include more-specific rows contained inside that prefix. |
+| `rdap_method` | `str` | `"rdap.org"` | RDAP lookup method: `"rdap.org"` for fast gateway lookups or `"iana-bootstrap"` to resolve the RIR service directly from IANA bootstrap data. |
+| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"text"`. Any other value raises `ValueError`. |
+
+Return modes:
+
+- `output="objects"`: returns `DoctorResult`
+- `output="json"`: returns a JSON object string
+- `output="text"`: returns a human-readable text report with lookup trace and matches
+
+Behavior notes:
+
+- `GeoFeed.doctor()` is a static helper. It does not use a preloaded `GeoFeed` instance or require a `source` argument.
+- IP input is queried against RDAP directly. Prefix input is resolved via the prefix network address because RDAP IP lookups are address-based.
+- Discovery supports direct RDAP geofeed links as well as remark/comment references such as `Geofeed: https://example.com/geofeed.csv`.
+- If the most specific RDAP object does not publish a geofeed reference but exposes `rdap-up`, the lookup walks parent objects until the most specific published geofeed reference is found.
+- Only geofeed rows covered by the referring RDAP object range are considered during the final lookup.
+- `rdap_method="rdap.org"` is the default because it avoids downloading bootstrap data for each process start. `rdap_method="iana-bootstrap"` uses IANA bootstrap files to select the registry endpoint directly, which is useful when you do not want to rely on rdap.org.
+
 #### `info()`
 
 ```python
@@ -422,6 +475,46 @@ Helper:
 result.as_dict() -> dict[str, object]
 ```
 
+#### `DoctorLookup`
+
+Lookup metadata returned inside `DoctorResult.lookup`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `lookup_strategy` | `str` | How the RDAP lookup was performed, such as `"ip-address"` or `"prefix-network-address"`. |
+| `rdap_method` | `str` | RDAP lookup method used, such as `"rdap.org"` or `"iana-bootstrap"`. |
+| `rdap_query` | `str` | The single IP address used for the RDAP lookup. |
+| `bootstrap_url` | `str` | Initial RDAP object URL queried after method selection. |
+| `bootstrap_source_url` | `str | None` | Bootstrap source used to choose `bootstrap_url`, such as `https://rdap.org/` or an IANA bootstrap JSON file. |
+| `resolved_urls` | `tuple[str, ...]` | RDAP object URLs visited during discovery, ordered from most specific to broader parents. |
+| `referring_handle` | `str | None` | Handle of the RDAP object that published the selected geofeed reference, when available. |
+| `referring_range` | `str | None` | Start/end range of the referring RDAP object, when available. |
+| `geofeed_url` | `str | None` | Published geofeed URL, or `None` when no geofeed reference was found. |
+| `geofeed_discovered_via` | `str | None` | How the geofeed reference was discovered, such as a direct RDAP link or remarks-based reference. |
+| `geofeed_reference_url` | `str | None` | RDAP object URL where the geofeed reference was found. |
+
+Helper:
+
+```python
+lookup.as_dict() -> dict[str, object]
+```
+
+#### `DoctorResult`
+
+Lookup result returned by `GeoFeed.doctor()` or `AsyncGeoFeed.doctor()`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `query` | `str` | Original query string. |
+| `lookup` | `DoctorLookup` | RDAP discovery metadata and geofeed location information. |
+| `matches` | `tuple[GeofeedRecord, ...]` | Matching geofeed rows, ordered most-specific first. |
+
+Helper:
+
+```python
+result.as_dict() -> dict[str, object]
+```
+
 #### `GeoFeedInfo`
 
 Summary statistics returned by `GeoFeed.info()`.
@@ -452,9 +545,9 @@ info.as_dict() -> dict[str, object]
 
 Common exceptions to expect when using the Python API:
 
-- `ValueError`: invalid `output` mode or an invalid query string passed to `query()`
+- `ValueError`: invalid `output` mode or an invalid query string passed to `query()` or `doctor()`
 - `FileNotFoundError` or other `OSError` subclasses: local file read failures
-- `geofeed_tools.loader.FetchError`: remote HTTP(S) fetch failures
+- `geofeed_tools.loader.FetchError`: remote HTTP(S) or RDAP fetch failures
 
 Example:
 
@@ -500,6 +593,9 @@ geofeed-tools normalize geofeeds.csv --output normalized.csv
 # Query by IP address or prefix
 geofeed-tools query geofeeds.csv 192.0.2.200
 
+# Discover a published geofeed for an address via RDAP
+geofeed-tools doctor 31.133.128.1 --json
+
 # Show summary statistics
 geofeed-tools info geofeeds.csv
 
@@ -516,7 +612,8 @@ geofeed-tools validate --help
 
 ### Common CLI Behavior
 
-- Every command takes a `source` positional argument pointing to a local file or HTTP(S) URL.
+- Most commands take a `source` positional argument pointing to a local file or HTTP(S) URL.
+- The `doctor` command takes only a `QUERY` positional argument because it discovers the geofeed source dynamically via RDAP.
 - Every command supports cumulative `-v` or `--verbose` flags.
 - Verbosity levels are:
 	- `-v`: INFO
@@ -667,6 +764,45 @@ Output and exit notes:
 - With `--json`, output is a JSON object with `query` and `matches`.
 - In CSV mode, no match prints an error to stderr and exits with code `1`.
 - In JSON mode, no match returns an empty `matches` array and exits successfully.
+
+#### `doctor`
+
+Usage:
+
+```bash
+geofeed-tools doctor QUERY [OPTIONS]
+```
+
+Discover a published geofeed via RDAP and query it using an IP address or CIDR prefix.
+
+| Argument | Meaning |
+| --- | --- |
+| `QUERY` | IP address or CIDR prefix to diagnose. |
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--all` | off | Return all matches instead of only the most specific match. |
+| `--longer` | off | Include more-specific prefixes contained by the query prefix. |
+| `--rdap-method` | `rdap.org` | RDAP lookup method: `rdap.org` (default) or `iana-bootstrap`. |
+| `--json` | off | Emit a JSON result object instead of the default text report. |
+| `-v`, `--verbose` | `0` | Increase log verbosity. |
+
+Examples:
+
+```bash
+geofeed-tools doctor 31.133.128.1
+geofeed-tools doctor 31.133.128.1 --json
+geofeed-tools doctor 192.0.2.0/24 --all --longer
+geofeed-tools doctor 31.133.128.1 --rdap-method iana-bootstrap
+```
+
+Output and exit notes:
+
+- Default output is a text report with the RDAP lookup trace, referring object, geofeed URL, and matching rows.
+- With `--json`, output is a JSON object containing `query`, `lookup`, and `matches`.
+- `--rdap-method rdap.org` is the default because it is faster for one-off lookups. `--rdap-method iana-bootstrap` avoids relying on rdap.org and queries the selected RIR service directly after reading the IANA bootstrap file.
+- Exits `0` when a geofeed is discovered and at least one matching row is found.
+- Exits `1` when no geofeed reference is published or when the discovered geofeed contains no matching row for the query.
 
 #### `info`
 

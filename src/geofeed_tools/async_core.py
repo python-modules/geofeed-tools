@@ -12,9 +12,17 @@ from .core import (
     _query_loaded,
     _validate_loaded,
 )
+from .doctor import doctor_query_async, render_doctor_text
+from .io_utils import doctor_to_json
 from .loader import FetchError, decode_text, load_input_async, source_kind
 from .logging import TRACE_LEVEL, logger
-from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .models import (
+    DoctorResult,
+    GeoFeedInfo,
+    GeofeedRecord,
+    QueryResult,
+    ValidationReport,
+)
 from .query import load_query_records
 
 
@@ -158,6 +166,31 @@ class AsyncGeoFeed:
             output=output,
             indexed_records=indexed_records,
         )
+
+    @staticmethod
+    async def doctor(
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        rdap_method: str = "rdap.org",
+        output: str = "objects",
+    ) -> DoctorResult | str:
+        """Discover and query a published geofeed asynchronously via RDAP."""
+        if output not in {"objects", "json", "text"}:
+            raise ValueError("output must be one of: objects, json, text")
+
+        result = await doctor_query_async(
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+        )
+        if output == "objects":
+            return result
+        if output == "json":
+            return doctor_to_json(result)
+        return render_doctor_text(result)
 
     async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate geofeed statistics asynchronously."""

@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable
 from io import StringIO
 
-from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 
 
 def records_to_csv(
@@ -59,4 +59,9 @@ def info_to_json(info: GeoFeedInfo) -> str:
 
 def query_to_json(result: QueryResult) -> str:
     """Serialize query result to JSON text."""
+    return json.dumps(result.as_dict(), indent=2)
+
+
+def doctor_to_json(result: DoctorResult) -> str:
+    """Serialize doctor result to JSON text."""
     return json.dumps(result.as_dict(), indent=2)

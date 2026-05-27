@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from ._query_cache import QueryIndex, QueryIndexCache
+from .doctor import doctor_query, render_doctor_text
 from .info import build_info
 from .io_utils import (
+    doctor_to_json,
     info_to_json,
     query_to_json,
     records_to_csv,
@@ -13,7 +15,7 @@ from .io_utils import (
 )
 from .loader import FetchError, decode_text, load_input, source_kind
 from .logging import TRACE_LEVEL, logger
-from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text
 from .query import load_query_records, query_text
@@ -359,6 +361,54 @@ def _info_loaded(
     return payload
 
 
+def _doctor(
+    query: str,
+    *,
+    return_all: bool = False,
+    include_longer: bool = False,
+    rdap_method: str = "rdap.org",
+    output: str = "objects",
+) -> DoctorResult | str:
+    _validate_output(output, ("objects", "json", "text"))
+    logger.info("Running doctor command for query=%s", query)
+    result = doctor_query(
+        query,
+        return_all=return_all,
+        include_longer=include_longer,
+        rdap_method=rdap_method,
+    )
+    if output == "objects":
+        logger.debug(
+            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s",
+            query,
+            result.lookup.geofeed_url,
+            len(result.matches),
+            output,
+        )
+        return result
+    if output == "json":
+        payload = doctor_to_json(result)
+        logger.debug(
+            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+            query,
+            result.lookup.geofeed_url,
+            len(result.matches),
+            output,
+            len(payload),
+        )
+        return payload
+    payload = render_doctor_text(result)
+    logger.debug(
+        "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+        query,
+        result.lookup.geofeed_url,
+        len(result.matches),
+        output,
+        len(payload),
+    )
+    return payload
+
+
 class GeoFeed:
     """Main object-oriented API for geofeed workflows."""
 
@@ -492,6 +542,24 @@ class GeoFeed:
             include_longer=include_longer,
             output=output,
             indexed_records=indexed_records,
+        )
+
+    @staticmethod
+    def doctor(
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        rdap_method: str = "rdap.org",
+        output: str = "objects",
+    ) -> DoctorResult | str:
+        """Discover and query a published geofeed for an IP or prefix via RDAP."""
+        return _doctor(
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            rdap_method=rdap_method,
+            output=output,
         )
 
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:

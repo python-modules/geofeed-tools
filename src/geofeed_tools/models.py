@@ -54,7 +54,10 @@ class ValidationIssue:
     def format(self) -> str:
         """Render the issue as a human-readable single-line message."""
         location = f"line {self.line}" if self.line is not None else "file"
-        return f"[{self.severity.upper()}] {location}: {self.code}: {self.message}"
+        return (
+            f"[{self.severity.upper()}] {location}: "
+            f"{self.code}: {self.message}"
+        )
 
 
 @dataclass(frozen=True)
@@ -69,7 +72,7 @@ class ValidationReport:
     issues: tuple[ValidationIssue, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
-        """Return a JSON-serializable representation of the validation report."""
+        """Return a JSON-serializable validation report."""
         return {
             "source": self.source,
             "records": self.records,
@@ -91,7 +94,69 @@ class QueryResult:
         """Return a JSON-serializable representation of the query result."""
         return {
             "query": self.query,
-            "matches": [record.as_dict(include_validation=False, include_raw_line=True) for record in self.matches],
+            "matches": [
+                record.as_dict(
+                    include_validation=False,
+                    include_raw_line=True,
+                )
+                for record in self.matches
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class DoctorLookup:
+    """Metadata describing how a geofeed was discovered via RDAP."""
+
+    lookup_strategy: str
+    rdap_query: str
+    bootstrap_url: str
+    rdap_method: str = "rdap.org"
+    bootstrap_source_url: str | None = None
+    resolved_urls: tuple[str, ...] = ()
+    referring_handle: str | None = None
+    referring_range: str | None = None
+    geofeed_url: str | None = None
+    geofeed_discovered_via: str | None = None
+    geofeed_reference_url: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation of the lookup metadata."""
+        return {
+            "lookup_strategy": self.lookup_strategy,
+            "rdap_method": self.rdap_method,
+            "rdap_query": self.rdap_query,
+            "bootstrap_url": self.bootstrap_url,
+            "bootstrap_source_url": self.bootstrap_source_url,
+            "resolved_urls": list(self.resolved_urls),
+            "referring_handle": self.referring_handle,
+            "referring_range": self.referring_range,
+            "geofeed_url": self.geofeed_url,
+            "geofeed_discovered_via": self.geofeed_discovered_via,
+            "geofeed_reference_url": self.geofeed_reference_url,
+        }
+
+
+@dataclass(frozen=True)
+class DoctorResult:
+    """Doctor results for discovering and querying a published geofeed."""
+
+    query: str
+    lookup: DoctorLookup
+    matches: tuple[GeofeedRecord, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation of the doctor result."""
+        return {
+            "query": self.query,
+            "lookup": self.lookup.as_dict(),
+            "matches": [
+                record.as_dict(
+                    include_validation=False,
+                    include_raw_line=True,
+                )
+                for record in self.matches
+            ],
         }
 
 
