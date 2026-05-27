@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ._query_cache import QueryIndex, QueryIndexCache
 from .info import build_info
 from .io_utils import (
     info_to_json,
@@ -15,10 +16,8 @@ from .logging import TRACE_LEVEL, logger
 from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text
-from .query import Network, load_query_records, query_text
+from .query import load_query_records, query_text
 from .validate import render_validation_text, validate_bytes
-
-QueryIndex = list[tuple[Network, GeofeedRecord]]
 
 
 def _validate_output(output: str, allowed: tuple[str, ...]) -> None:
@@ -376,8 +375,7 @@ class GeoFeed:
         self.raw: bytes | None = None
         self.content_type: str | None = None
         self.text: str | None = None
-        self._query_index_cache: QueryIndex | None = None
-        self._query_index_text: str | None = None
+        self._query_index_state = QueryIndexCache(enabled=cache_query_index)
 
         if auto_load:
             self.reload()
@@ -390,8 +388,7 @@ class GeoFeed:
         self.content_type = content_type
         # Parser and normalizer behavior strips UTF-8 BOM before processing.
         self.text = decode_text(raw, strip_bom=True)
-        self._query_index_cache = None
-        self._query_index_text = None
+        self._query_index_state.invalidate()
         assert self.text is not None
         logger.debug(
             "Loaded geofeed source from %s: %s bytes=%d chars=%d content_type=%r",
@@ -484,12 +481,9 @@ class GeoFeed:
     ) -> QueryResult | str:
         """Query the source for an IP or prefix and return matching records."""
         _raw, text = self._ensure_loaded()
-        indexed_records: QueryIndex | None = None
-        if self._cache_query_index:
-            if self._query_index_cache is None or self._query_index_text != text:
-                self._query_index_cache = load_query_records(text)
-                self._query_index_text = text
-            indexed_records = self._query_index_cache
+        indexed_records = self._query_index_state.get_cached()
+        if indexed_records is None and self._cache_query_index:
+            indexed_records = self._query_index_state.store(load_query_records(text))
         return _query_loaded(
             self.source,
             text,

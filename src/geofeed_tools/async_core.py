@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+from ._query_cache import QueryIndexCache
 from .core import (
-    QueryIndex,
     _info_loaded,
     _normalize_loaded,
     _parse_loaded,
@@ -27,8 +27,7 @@ class AsyncGeoFeed:
         self.raw: bytes | None = None
         self.content_type: str | None = None
         self.text: str | None = None
-        self._query_index_cache: QueryIndex | None = None
-        self._query_index_text: str | None = None
+        self._query_index_state = QueryIndexCache()
 
     @classmethod
     async def from_source(cls, source: str) -> AsyncGeoFeed:
@@ -49,8 +48,7 @@ class AsyncGeoFeed:
         self.raw = raw
         self.content_type = content_type
         self.text = decode_text(raw, strip_bom=True)
-        self._query_index_cache = None
-        self._query_index_text = None
+        self._query_index_state.invalidate()
         assert self.text is not None
         logger.debug(
             "Loaded geofeed source asynchronously from %s: %s bytes=%d chars=%d content_type=%r",
@@ -146,9 +144,10 @@ class AsyncGeoFeed:
     ) -> QueryResult | str:
         """Query the source asynchronously for an IP or prefix."""
         _raw, text = await self._ensure_loaded()
-        if self._query_index_cache is None or self._query_index_text != text:
-            self._query_index_cache = await asyncio.to_thread(load_query_records, text)
-            self._query_index_text = text
+        indexed_records = self._query_index_state.get_cached()
+        if indexed_records is None:
+            indexed_records = await asyncio.to_thread(load_query_records, text)
+            indexed_records = self._query_index_state.store(indexed_records)
         return await asyncio.to_thread(
             _query_loaded,
             self.source,
@@ -157,7 +156,7 @@ class AsyncGeoFeed:
             return_all=return_all,
             include_longer=include_longer,
             output=output,
-            indexed_records=self._query_index_cache,
+            indexed_records=indexed_records,
         )
 
     async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
