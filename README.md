@@ -33,6 +33,8 @@
       - [`query`](#query-1)
       - [`info`](#info-1)
       - [`hook`](#hook)
+    - [GitHub Actions Integration](#github-actions-integration)
+      - [How To Use It In Another Repository](#how-to-use-it-in-another-repository)
   - [Testing](#testing)
     - [HTML test reports](#html-test-reports)
     - [Test Notes](#test-notes)
@@ -655,6 +657,17 @@ Output and exit notes:
 - By default, the command fails only on errors.
 - With `--strict`, the command also fails on warnings.
 - Success summary format is `hook: OK ...`; failure summary format is `hook: FAIL ...`.
+
+### GitHub Actions Integration
+
+The `hook` command is designed to work well as a CI quality gate. This repository includes a copy-paste workflow template at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml) for downstream repositories that want to validate a tracked geofeed file in GitHub Actions.
+
+#### How To Use It In Another Repository
+
+1. Copy [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml) into your repository as `.github/workflows/geofeed-validation.yml`.
+2. Replace `path/to/geofeed.csv` in both `env.GEOFEED_PATH` and the `paths` filters with the actual tracked geofeed file path in your repository.
+3. Commit the workflow file and push it to GitHub.
+4. Optionally mark the workflow as a required status check in your branch protection rules so pull requests cannot merge when the geofeed validation fails.
 
 ## Testing
 
