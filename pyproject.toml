@@ -32,9 +32,10 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = 'https://github.com/python-modules/geofeed-tools'
-Homepage = 'https://github.com/python-modules/geofeed-tools'
-Issues = "https://github.com/python-modules/geofeed-tools/issues"
+homepage = 'https://github.com/python-modules/geofeed-tools'
+repository = 'https://github.com/python-modules/geofeed-tools'
+changelog = 'https://github.com/python-modules/geofeed-tools/blob/main/CHANGELOG.md'
+issues = "https://github.com/python-modules/geofeed-tools/issues"
 
 [project.optional-dependencies]
 async = [
