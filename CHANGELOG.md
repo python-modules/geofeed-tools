@@ -1,5 +1,7 @@
 # geofeed-tools Changelog
 
+## PENDING - 0.2.0
+
 ## 2026-05-26 - 0.1.2
 
 - Improve query cache handling
