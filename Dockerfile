@@ -15,6 +15,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 
+# hadolint ignore=DL3013
 RUN python -m pip install --upgrade pip \
     && python -m pip install --target=/opt/site-packages ".[cli]"
 

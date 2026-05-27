@@ -1,0 +1,23 @@
+name: Docker Quality
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-quality:
+    name: Docker Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        run: docker run --rm -i hadolint/hadolint:latest-debian < Dockerfile
+
+      - name: Build Docker image
+        run: docker build -t geofeed-tools:quality .
