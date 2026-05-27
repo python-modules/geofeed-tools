@@ -46,6 +46,7 @@
   - [Testing](#testing)
     - [HTML test reports](#html-test-reports)
     - [Test Notes](#test-notes)
+  - [Configuration](#configuration)
 
 ## Basic Overview
 
@@ -1054,3 +1055,24 @@ Open it in a browser after test execution.
 ### Test Notes
 
 - Integration tests depend HTTP access to a set of well known geofeed files. The content of those files may change at any time resulting in different test failures.
+
+## Configuration
+
+All tuneable defaults and external service endpoints are centralised in [`src/geofeed_tools/config.py`](src/geofeed_tools/config.py). Edit that file to adjust any of the following without hunting through individual implementation modules:
+
+| Constant | Default | Purpose |
+| --- | --- | --- |
+| `USER_AGENT` | `geofeed-tools/<version>` | `User-Agent` header sent with all outgoing HTTP requests. |
+| `FETCH_TIMEOUT` | `30` | Seconds to wait for a remote HTTP response before giving up. |
+| `URL_SCHEMES` | `("http://", "https://")` | Accepted URL schemes for remote geofeed sources. |
+| `LOGGER_NAME` | `"geofeed_tools"` | Root logger name used throughout the package. |
+| `TRACE_LEVEL` | `5` | Numeric log level below `DEBUG` used for verbose HTTP tracing (`-vvv`). |
+| `LRU_COUNTRY_CACHE_SIZE` | `512` | Maximum entries in the ISO 3166-1 country code lookup cache. |
+| `LRU_SUBDIVISION_CACHE_SIZE` | `4096` | Maximum entries in the ISO 3166-2 subdivision code lookup cache. |
+| `DEFAULT_RDAP_METHOD` | `"rdap.org"` | RDAP lookup method used when no explicit method is specified. |
+| `RDAP_ORG_ROOT_URL` | `https://rdap.org/` | Base URL for the rdap.org proxy service. |
+| `RDAP_ORG_QUERY_TEMPLATE` | `https://rdap.org/ip/{}` | URL template for rdap.org IP queries. |
+| `IANA_BOOTSTRAP_URLS` | IPv4/IPv6 IANA JSON endpoints | IANA RDAP bootstrap index URLs keyed by IP version. |
+| `MAX_RDAP_DEPTH` | `8` | Maximum RDAP redirect hops before aborting a lookup. |
+| `RDAP_ACCEPT` | `application/rdap+json, …` | `Accept` header sent with RDAP queries. |
+| `JSON_ACCEPT` | `application/json, …` | `Accept` header sent with plain JSON requests (e.g. IANA bootstrap). |
