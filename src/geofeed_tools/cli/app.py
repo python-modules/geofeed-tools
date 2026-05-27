@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import sys
+from enum import StrEnum
 from pathlib import Path
 
 from tabulate import tabulate
 
 from geofeed_tools import GeoFeed
 from geofeed_tools.logging import configure_cli_structlog
-from geofeed_tools.models import ValidationReport
+from geofeed_tools.models import GeofeedRecord, ValidationReport
 
 JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
+
+
+class DumpFormat(StrEnum):
+    """Supported output formats for the dump command."""
+
+    JSON = "json"
+    CSV = "csv"
+    TABLE = "table"
 
 
 def _require_cli_deps():
@@ -37,21 +46,57 @@ def build_app():
     return app
 
 
+def _render_dump_table(
+    records: list[GeofeedRecord],
+    *,
+    include_validation: bool,
+) -> str:
+    headers = ["Prefix", "Country", "Region", "City", "Postal code"]
+    rows: list[list[str]] = []
+
+    for record in records:
+        row = [
+            record.prefix,
+            record.country,
+            record.region,
+            record.city,
+            record.postal_code,
+        ]
+        if include_validation:
+            row.extend(
+                [
+                    "true" if record.valid else "false",
+                    "; ".join(record.validation_messages),
+                ]
+            )
+        rows.append(row)
+
+    if include_validation:
+        headers.extend(["Valid", "Validation messages"])
+    return tabulate(rows, headers=headers, tablefmt="github")
+
+
 def _register_dump_command(app, typer) -> None:
     """Register the dump command."""
 
     @app.command("dump")
     def dump_command(
         source: str,
+        output_format: DumpFormat = typer.Option(
+            DumpFormat.JSON,
+            "--format",
+            "-f",
+            help="Output format: json (default), csv, or table",
+        ),
         normalize_first: bool = typer.Option(
             False,
             "--normalize",
-            help="Normalize records before dumping JSON",
+            help="Normalize records before dumping output",
         ),
         no_validation: bool = typer.Option(
             False,
             "--no-validation",
-            help="Skip per-record validation annotations",
+            help="Skip per-record validation annotations in JSON or table output",
         ),
         verbose: int = typer.Option(
             0,
@@ -61,13 +106,40 @@ def _register_dump_command(app, typer) -> None:
             help=VERBOSE_HELP,
         ),
     ) -> None:
-        """Dump geofeed records as JSON objects."""
+        """Dump geofeed records as JSON, geofeed CSV, or a table."""
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
+        include_validation = not no_validation
+
+        if output_format is DumpFormat.TABLE:
+            records = geofeed.parse(
+                output="objects",
+                normalize=normalize_first,
+                include_validation=include_validation,
+            )
+            assert isinstance(records, list)
+            print(
+                _render_dump_table(
+                    records,
+                    include_validation=include_validation,
+                )
+            )
+            return
+
+        if output_format is DumpFormat.CSV:
+            payload = geofeed.parse(
+                output="csv",
+                normalize=normalize_first,
+                include_validation=False,
+            )
+            assert isinstance(payload, str)
+            print(payload, end="")
+            return
+
         payload = geofeed.parse(
             output="json",
             normalize=normalize_first,
-            include_validation=not no_validation,
+            include_validation=include_validation,
         )
         assert isinstance(payload, str)
         print(payload)

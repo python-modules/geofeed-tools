@@ -432,6 +432,12 @@ geofeed-tools validate geofeeds.csv
 # Dump parsed records as JSON
 geofeed-tools dump geofeeds.csv
 
+# Dump parsed records as geofeed CSV
+geofeed-tools dump geofeeds.csv --format csv
+
+# Dump parsed records as a table
+geofeed-tools dump geofeeds.csv --format table
+
 # Normalize to canonical CSV and write to a file
 geofeed-tools normalize geofeeds.csv --output normalized.csv
 
@@ -511,22 +517,28 @@ Parse the geofeed and print records as a JSON array.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `--format`, `-f` | `json` | Output format: `json`, `csv`, or `table`. |
 | `--normalize` | off | Normalize records before dumping them. |
-| `--no-validation` | off | Skip per-record validation annotations in the JSON output. |
+| `--no-validation` | off | Skip per-record validation annotations in JSON or table output. |
 | `-v`, `--verbose` | `0` | Increase log verbosity. |
 
 Examples:
 
 ```bash
 geofeed-tools dump geofeeds.csv
+geofeed-tools dump geofeeds.csv --format csv
+geofeed-tools dump geofeeds.csv --format table
 geofeed-tools dump geofeeds.csv --no-validation
 geofeed-tools dump geofeeds.csv --normalize
 ```
 
 Output notes:
 
-- Output is always JSON.
-- By default, each record includes `valid` and `validation_messages` fields.
+- Default output is JSON.
+- `--format csv` emits standard 5-column geofeed rows.
+- `--format table` emits a GitHub-style table rendered with `tabulate`.
+- By default, JSON and table output include `valid` and `validation_messages` fields.
+- `--no-validation` affects JSON and table output only. CSV output always uses plain geofeed rows.
 - With `--normalize`, the output reflects normalized records rather than the original parsed rows.
 
 #### `normalize`
