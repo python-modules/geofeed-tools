@@ -10,6 +10,7 @@ import ipaddress
 import pycountry
 
 from .loader import is_url
+from .logging import TRACE_LEVEL, logger
 from .models import ValidationIssue, ValidationReport
 from .parsing import (
     MAX_FIELDS,
@@ -28,6 +29,21 @@ class _ValidationState:
         self.record_count = 0
         self.prev_by_version: dict[int, Network] = {}
         self.records_for_aggregation: list[tuple[Network, tuple[str, str, str, str], int]] = []
+
+
+def _trace_new_issues(issues: list[ValidationIssue], start_index: int) -> None:
+    """Emit trace logs for newly appended validation issues."""
+    if not logger.isEnabledFor(TRACE_LEVEL):
+        return
+    for issue in issues[start_index:]:
+        logger.log(
+            TRACE_LEVEL,
+            "Validation issue detected: severity=%s line=%s code=%s message=%s",
+            issue.severity,
+            issue.line,
+            issue.code,
+            issue.message,
+        )
 
 
 def find_aggregations(
@@ -173,20 +189,34 @@ def validate_bytes(
     check_aggregation: bool = False,
 ) -> ValidationReport:
     """Validate geofeed bytes and return a structured report."""
+    logger.debug(
+        "Running validation engine: source=%s bytes=%d check_sort=%s check_content_type=%s check_aggregation=%s",
+        source,
+        len(raw),
+        check_sort,
+        check_content_type,
+        check_aggregation,
+    )
     issues: list[ValidationIssue] = []
+    issue_start = len(issues)
     _add_content_type_issue(
         issues,
         source,
         content_type,
         check_content_type,
     )
+    _trace_new_issues(issues, issue_start)
 
+    issue_start = len(issues)
     text = _decode_for_validation(raw, issues)
+    _trace_new_issues(issues, issue_start)
     if text is None:
+        logger.debug("Validation stopped before record scanning due to decode failure: source=%s", source)
         return _report_from_issues(source, 0, issues)
 
     state = _ValidationState()
     for lineno, data in iter_data_lines(text):
+        issue_start = len(issues)
         _validate_data_line(
             lineno,
             data,
@@ -195,9 +225,12 @@ def validate_bytes(
             check_sort,
             check_aggregation,
         )
+        _trace_new_issues(issues, issue_start)
 
     if check_aggregation:
+        issue_start = len(issues)
         issues.extend(find_aggregations(state.records_for_aggregation))
+        _trace_new_issues(issues, issue_start)
 
     if text is not None:
         line_map = dict(enumerate(text.splitlines(), start=1))
@@ -206,7 +239,15 @@ def validate_bytes(
             for issue in issues
         ]
 
-    return _report_from_issues(source, state.record_count, issues)
+    report = _report_from_issues(source, state.record_count, issues)
+    logger.debug(
+        "Validation engine completed: source=%s records=%d errors=%d warnings=%d",
+        source,
+        report.records,
+        report.errors,
+        report.warnings,
+    )
+    return report
 
 
 def _add_content_type_issue(

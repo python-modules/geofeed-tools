@@ -10,7 +10,8 @@ from .io_utils import (
     records_to_json,
     report_to_json,
 )
-from .loader import FetchError, decode_text, load_input
+from .loader import FetchError, decode_text, load_input, source_kind
+from .logging import TRACE_LEVEL, logger
 from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text
@@ -32,6 +33,12 @@ def _build_parsed_records(
     include_validation: bool,
     normalize: bool,
 ) -> list[GeofeedRecord]:
+    logger.debug(
+        "Building parsed geofeed records: source=%s include_validation=%s normalize=%s",
+        source,
+        include_validation,
+        normalize,
+    )
     records = normalize_records(text) if normalize else parse_text(text)
     if include_validation:
         records = annotate_validity(
@@ -40,6 +47,7 @@ def _build_parsed_records(
             raw=raw,
             content_type=content_type,
         )
+    logger.debug("Built parsed geofeed records: source=%s records=%d", source, len(records))
     return records
 
 
@@ -54,6 +62,14 @@ def _parse_loaded(
     output: str = "objects",
 ) -> list[GeofeedRecord] | str:
     _validate_output(output, ("objects", "json", "csv"))
+    logger.info("Parsing geofeed records from %s source: %s", source_kind(source), source)
+    logger.debug(
+        "Parse options: source=%s include_validation=%s normalize=%s output=%s",
+        source,
+        include_validation,
+        normalize,
+        output,
+    )
     records = _build_parsed_records(
         source,
         raw,
@@ -63,16 +79,33 @@ def _parse_loaded(
         normalize=normalize,
     )
     if output == "objects":
+        logger.debug("Parse completed: source=%s records=%d output=%s", source, len(records), output)
         return records
     if output == "json":
-        return records_to_json(
+        payload = records_to_json(
             records,
             include_validation=include_validation,
         )
-    return records_to_csv(
+        logger.debug(
+            "Parse completed: source=%s records=%d output=%s payload_chars=%d",
+            source,
+            len(records),
+            output,
+            len(payload),
+        )
+        return payload
+    payload = records_to_csv(
         records,
         include_validation=include_validation,
     )
+    logger.debug(
+        "Parse completed: source=%s records=%d output=%s payload_chars=%d",
+        source,
+        len(records),
+        output,
+        len(payload),
+    )
+    return payload
 
 
 def _build_validation_report(
@@ -84,6 +117,13 @@ def _build_validation_report(
     check_content_type: bool = True,
     check_aggregation: bool = False,
 ) -> ValidationReport:
+    logger.debug(
+        "Building validation report: source=%s check_sort=%s check_content_type=%s check_aggregation=%s",
+        source,
+        check_sort,
+        check_content_type,
+        check_aggregation,
+    )
     return validate_bytes(
         raw,
         source,
@@ -105,6 +145,15 @@ def _validate_loaded(
     output: str = "objects",
 ) -> ValidationReport | str:
     _validate_output(output, ("objects", "json", "text"))
+    logger.info("Validating geofeed source: %s", source)
+    logger.debug(
+        "Validation options: source=%s check_sort=%s check_content_type=%s check_aggregation=%s output=%s",
+        source,
+        check_sort,
+        check_content_type,
+        check_aggregation,
+        output,
+    )
     report = _build_validation_report(
         source,
         raw,
@@ -114,13 +163,42 @@ def _validate_loaded(
         check_aggregation=check_aggregation,
     )
     if output == "objects":
+        logger.debug(
+            "Validation completed: source=%s records=%d errors=%d warnings=%d output=%s",
+            source,
+            report.records,
+            report.errors,
+            report.warnings,
+            output,
+        )
         return report
     if output == "json":
-        return report_to_json(report)
-    return render_validation_text(report)
+        payload = report_to_json(report)
+        logger.debug(
+            "Validation completed: source=%s records=%d errors=%d warnings=%d output=%s payload_chars=%d",
+            source,
+            report.records,
+            report.errors,
+            report.warnings,
+            output,
+            len(payload),
+        )
+        return payload
+    payload = render_validation_text(report)
+    logger.debug(
+        "Validation completed: source=%s records=%d errors=%d warnings=%d output=%s payload_chars=%d",
+        source,
+        report.records,
+        report.errors,
+        report.warnings,
+        output,
+        len(payload),
+    )
+    return payload
 
 
 def _normalize_loaded(
+    source: str,
     text: str,
     *,
     uppercase: bool = True,
@@ -131,6 +209,17 @@ def _normalize_loaded(
     output: str = "objects",
 ) -> list[GeofeedRecord] | str:
     _validate_output(output, ("objects", "json", "csv"))
+    logger.info("Normalizing geofeed source: %s", source)
+    logger.debug(
+        "Normalize options: source=%s uppercase=%s sort=%s aggregate=%s dedupe=%s fix_host_bits=%s output=%s",
+        source,
+        uppercase,
+        sort,
+        aggregate,
+        dedupe,
+        fix_host_bits,
+        output,
+    )
     records = normalize_records(
         text,
         uppercase=uppercase,
@@ -140,13 +229,31 @@ def _normalize_loaded(
         fix_host_bits=fix_host_bits,
     )
     if output == "objects":
+        logger.debug("Normalize completed: source=%s records=%d output=%s", source, len(records), output)
         return records
     if output == "json":
-        return records_to_json(records, include_validation=False)
-    return records_to_csv(records, include_validation=False)
+        payload = records_to_json(records, include_validation=False)
+        logger.debug(
+            "Normalize completed: source=%s records=%d output=%s payload_chars=%d",
+            source,
+            len(records),
+            output,
+            len(payload),
+        )
+        return payload
+    payload = records_to_csv(records, include_validation=False)
+    logger.debug(
+        "Normalize completed: source=%s records=%d output=%s payload_chars=%d",
+        source,
+        len(records),
+        output,
+        len(payload),
+    )
+    return payload
 
 
 def _query_loaded(
+    source: str,
     text: str,
     query: str,
     *,
@@ -155,6 +262,15 @@ def _query_loaded(
     output: str = "objects",
 ) -> QueryResult | str:
     _validate_output(output, ("objects", "json", "csv"))
+    logger.info("Querying geofeed source: %s query=%s", source, query)
+    logger.debug(
+        "Query options: source=%s query=%s return_all=%s include_longer=%s output=%s",
+        source,
+        query,
+        return_all,
+        include_longer,
+        output,
+    )
     result = query_text(
         text,
         query,
@@ -162,10 +278,35 @@ def _query_loaded(
         include_longer=include_longer,
     )
     if output == "objects":
+        logger.debug(
+            "Query completed: source=%s query=%s matches=%d output=%s",
+            source,
+            query,
+            len(result.matches),
+            output,
+        )
         return result
     if output == "json":
-        return query_to_json(result)
-    return records_to_csv(list(result.matches), include_validation=False)
+        payload = query_to_json(result)
+        logger.debug(
+            "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
+            source,
+            query,
+            len(result.matches),
+            output,
+            len(payload),
+        )
+        return payload
+    payload = records_to_csv(list(result.matches), include_validation=False)
+    logger.debug(
+        "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
+        source,
+        query,
+        len(result.matches),
+        output,
+        len(payload),
+    )
+    return payload
 
 
 def _info_loaded(
@@ -177,6 +318,7 @@ def _info_loaded(
     output: str = "objects",
 ) -> GeoFeedInfo | str:
     _validate_output(output, ("objects", "json"))
+    logger.info("Computing geofeed summary: %s", source)
     records = _build_parsed_records(
         source,
         raw,
@@ -192,8 +334,26 @@ def _info_loaded(
     )
     info = build_info(source, records, report)
     if output == "objects":
+        logger.debug(
+            "Computed geofeed summary: source=%s total_records=%d errors=%d warnings=%d output=%s",
+            source,
+            info.total_records,
+            info.errors,
+            info.warnings,
+            output,
+        )
         return info
-    return info_to_json(info)
+    payload = info_to_json(info)
+    logger.debug(
+        "Computed geofeed summary: source=%s total_records=%d errors=%d warnings=%d output=%s payload_chars=%d",
+        source,
+        info.total_records,
+        info.errors,
+        info.warnings,
+        output,
+        len(payload),
+    )
+    return payload
 
 
 class GeoFeed:
@@ -211,15 +371,28 @@ class GeoFeed:
 
     def reload(self) -> None:
         """Reload the source bytes and decoded text from disk or HTTP."""
+        logger.info("Loading geofeed source from %s: %s", source_kind(self.source), self.source)
         raw, content_type = load_input(self.source)
         self.raw = raw
         self.content_type = content_type
         # Parser and normalizer behavior strips UTF-8 BOM before processing.
         self.text = decode_text(raw, strip_bom=True)
+        assert self.text is not None
+        logger.debug(
+            "Loaded geofeed source from %s: %s bytes=%d chars=%d content_type=%r",
+            source_kind(self.source),
+            self.source,
+            len(raw),
+            len(self.text),
+            content_type,
+        )
 
     def _ensure_loaded(self) -> tuple[bytes, str]:
         if self.raw is None or self.text is None:
+            logger.debug("Geofeed source not loaded yet; performing lazy load: %s", self.source)
             self.reload()
+        else:
+            logger.log(TRACE_LEVEL, "Using cached geofeed source: %s", self.source)
         assert self.raw is not None
         assert self.text is not None
         return self.raw, self.text
@@ -276,6 +449,7 @@ class GeoFeed:
         """Normalize records from the source and optionally serialize them."""
         _raw, text = self._ensure_loaded()
         return _normalize_loaded(
+            self.source,
             text,
             uppercase=uppercase,
             sort=sort,
@@ -296,6 +470,7 @@ class GeoFeed:
         """Query the source for an IP or prefix and return matching records."""
         _raw, text = self._ensure_loaded()
         return _query_loaded(
+            self.source,
             text,
             query,
             return_all=return_all,
@@ -305,8 +480,6 @@ class GeoFeed:
 
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate statistics for the current geofeed source."""
-        records = self.parse(include_validation=False, output="objects")
-        assert isinstance(records, list)
         raw, text = self._ensure_loaded()
         return _info_loaded(
             self.source,

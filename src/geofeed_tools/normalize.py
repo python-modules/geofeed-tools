@@ -6,6 +6,7 @@ import collections
 import csv
 import ipaddress
 
+from .logging import TRACE_LEVEL, logger
 from .models import GeofeedRecord
 from .parsing import iter_data_lines, normalize_fields, parse_record
 
@@ -43,6 +44,14 @@ def normalize_records(
     fix_host_bits: bool = True,
 ) -> list[GeofeedRecord]:
     """Normalize geofeed rows using transform toggles."""
+    logger.debug(
+        "Normalizing geofeed records internally: uppercase=%s sort=%s aggregate=%s dedupe=%s fix_host_bits=%s",
+        uppercase,
+        sort,
+        aggregate,
+        dedupe,
+        fix_host_bits,
+    )
     parsed = _parse_and_fix(
         text,
         uppercase=uppercase,
@@ -82,19 +91,47 @@ def _parse_and_fix(
 ) -> list[tuple[Network, str, str, str, str, int]]:
     """Parse and normalize individual records with optional host-bit fixes."""
     records: list[tuple[Network, str, str, str, str, int]] = []
+    skipped_lines = 0
+    skipped_invalid_prefixes = 0
+    host_bit_fixes = 0
     for lineno, data in iter_data_lines(text):
         parsed = _parse_line(data)
         if parsed is None:
+            skipped_lines += 1
             continue
 
         prefix, country, region, city, postal = parsed
         network = _parse_network(prefix, fix_host_bits)
         if network is None:
+            skipped_invalid_prefixes += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during normalization due to invalid prefix: line=%d prefix=%r",
+                lineno,
+                prefix,
+            )
             continue
+        if fix_host_bits and str(network) != prefix:
+            host_bit_fixes += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Normalized host bits during geofeed normalization: line=%d original_prefix=%r normalized_prefix=%s",
+                lineno,
+                prefix,
+                network,
+            )
 
         country, region = _normalize_case(country, region, uppercase)
 
         records.append((network, country, region, city, postal, lineno))
+
+    logger.debug(
+        "Prepared geofeed normalization records: records=%d skipped_lines=%d skipped_invalid_prefixes=%d host_bit_fixes=%d",
+        len(records),
+        skipped_lines,
+        skipped_invalid_prefixes,
+        host_bit_fixes,
+    )
 
     return records
 
@@ -103,10 +140,16 @@ def _parse_line(data: str) -> list[str] | None:
     """Parse and normalize one CSV data line."""
     try:
         fields = parse_record(data)
-    except csv.Error:
+    except csv.Error as exc:
+        logger.log(
+            TRACE_LEVEL,
+            "Skipping geofeed line during normalization due to CSV error: error=%s",
+            exc,
+        )
         return None
     parsed = normalize_fields(fields)
     if not parsed[0]:
+        logger.log(TRACE_LEVEL, "Skipping geofeed line during normalization due to missing prefix")
         return None
     return parsed
 
@@ -156,6 +199,12 @@ def _aggregate(
         collapsed = _collapse_same_version(list(unique))
         for network in collapsed:
             out.append((network, country, region, city, postal))
+    logger.debug(
+        "Aggregated geofeed normalization records: input=%d groups=%d output=%d",
+        len(records),
+        len(by_key),
+        len(out),
+    )
     return out
 
 
@@ -190,5 +239,12 @@ def _dedupe(
             continue
         seen.add(item)
         out.append(item)
+
+    logger.debug(
+        "Deduplicated geofeed normalization records: input=%d output=%d removed=%d",
+        len(records),
+        len(out),
+        len(records) - len(out),
+    )
 
     return out

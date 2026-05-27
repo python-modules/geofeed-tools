@@ -11,7 +11,8 @@ from .core import (
     _query_loaded,
     _validate_loaded,
 )
-from .loader import FetchError, decode_text, load_input_async
+from .loader import FetchError, decode_text, load_input_async, source_kind
+from .logging import TRACE_LEVEL, logger
 from .models import GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
 
 
@@ -28,20 +29,38 @@ class AsyncGeoFeed:
     @classmethod
     async def from_source(cls, source: str) -> AsyncGeoFeed:
         """Create an instance and eagerly load the source asynchronously."""
+        logger.debug("Creating AsyncGeoFeed and eagerly loading source: %s", source)
         geofeed = cls(source)
         await geofeed.reload()
         return geofeed
 
     async def reload(self) -> None:
         """Reload the source bytes and decoded text asynchronously."""
+        logger.info(
+            "Loading geofeed source asynchronously from %s: %s",
+            source_kind(self.source),
+            self.source,
+        )
         raw, content_type = await load_input_async(self.source)
         self.raw = raw
         self.content_type = content_type
         self.text = decode_text(raw, strip_bom=True)
+        assert self.text is not None
+        logger.debug(
+            "Loaded geofeed source asynchronously from %s: %s bytes=%d chars=%d content_type=%r",
+            source_kind(self.source),
+            self.source,
+            len(raw),
+            len(self.text),
+            content_type,
+        )
 
     async def _ensure_loaded(self) -> tuple[bytes, str]:
         if self.raw is None or self.text is None:
+            logger.debug("Async geofeed source not loaded yet; performing lazy load: %s", self.source)
             await self.reload()
+        else:
+            logger.log(TRACE_LEVEL, "Using cached async geofeed source: %s", self.source)
         assert self.raw is not None
         assert self.text is not None
         return self.raw, self.text
@@ -101,6 +120,7 @@ class AsyncGeoFeed:
         _raw, text = await self._ensure_loaded()
         return await asyncio.to_thread(
             _normalize_loaded,
+            self.source,
             text,
             uppercase=uppercase,
             sort=sort,
@@ -122,6 +142,7 @@ class AsyncGeoFeed:
         _raw, text = await self._ensure_loaded()
         return await asyncio.to_thread(
             _query_loaded,
+            self.source,
             text,
             query,
             return_all=return_all,

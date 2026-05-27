@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import ipaddress
 
+from .logging import TRACE_LEVEL, logger
 from .models import GeofeedRecord, QueryResult
 from .parsing import iter_data_lines, normalize_fields, parse_record
 
@@ -22,20 +23,44 @@ def load_query_records(
     """Load queryable records and keep last occurrence per prefix."""
     last_by_prefix: dict[Network, GeofeedRecord] = {}
     line_map = dict(enumerate(text.splitlines(), start=1))
+    skipped_csv_errors = 0
+    skipped_missing_prefix = 0
+    skipped_invalid_prefix = 0
 
     for lineno, data in iter_data_lines(text):
         try:
             fields = parse_record(data)
-        except csv.Error:
+        except csv.Error as exc:
+            skipped_csv_errors += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during query indexing due to CSV error: line=%d error=%s",
+                lineno,
+                exc,
+            )
             continue
 
         prefix, country, region, city, postal = normalize_fields(fields)
         if not prefix:
+            skipped_missing_prefix += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during query indexing due to missing prefix: line=%d",
+                lineno,
+            )
             continue
 
         try:
             network = ipaddress.ip_network(prefix, strict=True)
-        except ValueError:
+        except ValueError as exc:
+            skipped_invalid_prefix += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during query indexing due to invalid prefix: line=%d prefix=%r error=%s",
+                lineno,
+                prefix,
+                exc,
+            )
             continue
 
         last_by_prefix[network] = GeofeedRecord(
@@ -48,7 +73,15 @@ def load_query_records(
             raw_line=line_map.get(lineno),
         )
 
-    return [(network, record) for network, record in last_by_prefix.items()]
+    records = [(network, record) for network, record in last_by_prefix.items()]
+    logger.debug(
+        "Indexed geofeed records for querying: records=%d skipped_csv_errors=%d skipped_missing_prefix=%d skipped_invalid_prefix=%d",
+        len(records),
+        skipped_csv_errors,
+        skipped_missing_prefix,
+        skipped_invalid_prefix,
+    )
+    return records
 
 
 def find_matches(
@@ -107,6 +140,16 @@ def query_text(
         query_network,
         include_longer=include_longer,
     )
+    original_match_count = len(matches)
     if not return_all:
         matches = matches[:1]
+    logger.debug(
+        "Resolved geofeed query: query=%s indexed_records=%d matches=%d returned=%d include_longer=%s return_all=%s",
+        query,
+        len(records),
+        original_match_count,
+        len(matches),
+        include_longer,
+        return_all,
+    )
     return QueryResult(query=query, matches=tuple(matches))
