@@ -29,19 +29,20 @@ from .query import load_query_records
 class AsyncGeoFeed:
     """Async-native geofeed API for library consumers."""
 
-    def __init__(self, source: str):
+    def __init__(self, source: str, *, cache_query_index: bool = True):
         """Initialize an async geofeed wrapper around a local path or URL."""
         self.source = source
+        self._cache_query_index = cache_query_index
         self.raw: bytes | None = None
         self.content_type: str | None = None
         self.text: str | None = None
-        self._query_index_state = QueryIndexCache()
+        self._query_index_state = QueryIndexCache(enabled=cache_query_index)
 
     @classmethod
-    async def from_source(cls, source: str) -> AsyncGeoFeed:
+    async def from_source(cls, source: str, *, cache_query_index: bool = True) -> AsyncGeoFeed:
         """Create an instance and eagerly load the source asynchronously."""
         logger.debug("Creating AsyncGeoFeed and eagerly loading source: %s", source)
-        geofeed = cls(source)
+        geofeed = cls(source, cache_query_index=cache_query_index)
         await geofeed.reload()
         return geofeed
 
@@ -153,9 +154,8 @@ class AsyncGeoFeed:
         """Query the source asynchronously for an IP or prefix."""
         _raw, text = await self._ensure_loaded()
         indexed_records = self._query_index_state.get_cached()
-        if indexed_records is None:
-            indexed_records = await asyncio.to_thread(load_query_records, text)
-            indexed_records = self._query_index_state.store(indexed_records)
+        if indexed_records is None and self._cache_query_index:
+            indexed_records = self._query_index_state.store(await asyncio.to_thread(load_query_records, text))
         return await asyncio.to_thread(
             _query_loaded,
             self.source,

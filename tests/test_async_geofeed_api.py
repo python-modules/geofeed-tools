@@ -148,3 +148,27 @@ def test_async_query_reuses_index_until_reload(monkeypatch) -> None:
         return call_count
 
     assert asyncio.run(scenario()) == 2
+
+
+def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
+    """AsyncGeoFeed should skip caching when cache_query_index=False."""
+    call_count = 0
+
+    real_loader = async_core_module.load_query_records
+
+    def counting_loader(text: str):
+        nonlocal call_count
+        call_count += 1
+        return real_loader(text)
+
+    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+
+    async def scenario() -> int:
+        geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"), cache_query_index=False)
+        first = await geofeed.query("192.0.2.200", output="objects")
+        second = await geofeed.query("2001:db8::1", output="objects")
+        assert not isinstance(first, str)
+        assert not isinstance(second, str)
+        return call_count
+
+    assert asyncio.run(scenario()) == 0
