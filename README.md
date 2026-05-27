@@ -62,25 +62,25 @@
 To install the core library with only the API available:
 
 ```bash
-uv pip install geofeed-tools
+python3 -m pip install geofeed-tools
 ```
 
 To install the full library including the CLI:
 
 ```bash
-uv pip install 'geofeed-tools[cli]'
+python3 -m pip 'geofeed-tools[cli]'
 ```
 
 To install the library with async HTTP support for `AsyncGeoFeed` URL loading:
 
 ```bash
-uv pip install 'geofeed-tools[async]'
+python3 -m pip 'geofeed-tools[async]'
 ```
 
 Install development dependencies:
 
 ```bash
-uv pip install 'geofeed-tools[dev]'
+python3 -m pip install 'geofeed-tools[dev]'
 ```
 
 ### Docker
