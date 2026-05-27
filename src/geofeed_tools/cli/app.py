@@ -7,34 +7,36 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 
+from geofeed_tools import GeoFeed, GeoFeedDiscoveryError
+from geofeed_tools.doctor import render_doctor_text
+from geofeed_tools.io_utils import doctor_to_json, report_to_json
+from geofeed_tools.logging import configure_cli_structlog
+from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport
+from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
+from geofeed_tools.validate import render_validation_text
+
+_CLI_EXTRAS = ("typer", "structlog", "tabulate")
 _MISSING_CLI_DEPS: list[str] = []
-for _dep in ("typer", "structlog", "tabulate"):
+for _dep in _CLI_EXTRAS:
     try:
         __import__(_dep)
     except ImportError:
         _MISSING_CLI_DEPS.append(_dep)
 
-if _MISSING_CLI_DEPS:
-    print(
-        "geofeed-tools CLI requires optional dependencies that are not installed.\n"
-        f"  Missing: {', '.join(_MISSING_CLI_DEPS)}\n"
-        "\n"
-        "Install the CLI extras with:\n"
-        "  pip install 'geofeed-tools[cli]'\n"
-        "  uv pip install 'geofeed-tools[cli]'",
-        file=sys.stderr,
-    )
-    sys.exit(1)
 
-from tabulate import tabulate  # noqa: E402
-
-from geofeed_tools import GeoFeed, GeoFeedDiscoveryError  # noqa: E402
-from geofeed_tools.doctor import render_doctor_text  # noqa: E402
-from geofeed_tools.io_utils import doctor_to_json, report_to_json  # noqa: E402
-from geofeed_tools.logging import configure_cli_structlog  # noqa: E402
-from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport  # noqa: E402
-from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD  # noqa: E402
-from geofeed_tools.validate import render_validation_text  # noqa: E402
+def _check_cli_deps() -> None:
+    """Emit a helpful error and exit when CLI extras are not installed."""
+    if _MISSING_CLI_DEPS:
+        print(
+            "geofeed-tools CLI requires optional dependencies that are not installed.\n"
+            f"  Missing: {', '.join(_MISSING_CLI_DEPS)}\n"
+            "\n"
+            "Install the CLI extras with:\n"
+            "  pip install 'geofeed-tools[cli]'\n"
+            "  uv pip install 'geofeed-tools[cli]'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
@@ -55,27 +57,19 @@ class RdapMethod(StrEnum):
     IANA_BOOTSTRAP = IANA_BOOTSTRAP_METHOD
 
 
-def _require_cli_deps():
-    """Import Typer lazily to keep CLI deps optional."""
-    try:
-        import typer
-    except ImportError as exc:
-        raise SystemExit("CLI dependencies are not installed. Install with: uv pip install '.[cli]'") from exc
-    return typer
-
-
 def build_app():
     """Build and return the Typer application."""
-    typer = _require_cli_deps()
-    app = typer.Typer(help="GeoFeed tools CLI")
-    _register_dump_command(app, typer)
-    _register_validate_command(app, typer)
-    _register_normalize_command(app, typer)
-    _register_query_command(app, typer)
-    _register_doctor_command(app, typer)
-    _register_lookup_command(app, typer)
-    _register_info_command(app, typer)
-    _register_hook_command(app, typer)
+    import typer as _typer
+
+    app = _typer.Typer(help="GeoFeed tools CLI")
+    _register_dump_command(app, _typer)
+    _register_validate_command(app, _typer)
+    _register_normalize_command(app, _typer)
+    _register_query_command(app, _typer)
+    _register_doctor_command(app, _typer)
+    _register_lookup_command(app, _typer)
+    _register_info_command(app, _typer)
+    _register_hook_command(app, _typer)
     return app
 
 
@@ -84,6 +78,8 @@ def _render_dump_table(
     *,
     include_validation: bool,
 ) -> str:
+    from tabulate import tabulate
+
     headers = ["Prefix", "Country", "Region", "City", "Postal code"]
     rows: list[list[str]] = []
 
@@ -456,6 +452,8 @@ def _register_info_command(app, typer) -> None:
         ),
     ) -> None:
         """Show geofeed statistics."""
+        from tabulate import tabulate
+
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         output = "json" if json_output else "objects"
@@ -554,5 +552,6 @@ def _register_hook_command(app, typer) -> None:
 
 def main() -> None:
     """CLI entrypoint used by project scripts."""
+    _check_cli_deps()
     app = build_app()
     app()

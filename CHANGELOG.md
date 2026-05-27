@@ -2,6 +2,8 @@
 
 ## PENDING - 0.2.0
 
+- Misc small fixups
+
 ## 2026-05-26 - 0.1.2
 
 - Improve query cache handling

@@ -6,7 +6,8 @@ import collections
 import csv
 import ipaddress
 
-from .logging import TRACE_LEVEL, logger
+from .config import TRACE_LEVEL
+from .logging import logger
 from .models import GeofeedRecord
 from .parsing import iter_data_lines, normalize_fields, parse_record
 

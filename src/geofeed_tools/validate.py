@@ -9,9 +9,9 @@ from functools import lru_cache
 
 import pycountry
 
-from .config import LRU_COUNTRY_CACHE_SIZE, LRU_SUBDIVISION_CACHE_SIZE
+from .config import LRU_COUNTRY_CACHE_SIZE, LRU_SUBDIVISION_CACHE_SIZE, TRACE_LEVEL
 from .loader import is_url
-from .logging import TRACE_LEVEL, logger
+from .logging import logger
 from .models import ValidationIssue, ValidationReport
 from .parsing import (
     MAX_FIELDS,
