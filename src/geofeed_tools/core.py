@@ -326,24 +326,14 @@ def _query_loaded(
         return serialized
     payload = serialized
     assert isinstance(payload, str)
-    if output == "json":
-        logger.debug(
-            "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
-            source,
-            query,
-            len(result.matches),
-            output,
-            len(payload),
-        )
-    else:
-        logger.debug(
-            "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
-            source,
-            query,
-            len(result.matches),
-            output,
-            len(payload),
-        )
+    logger.debug(
+        "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
+        source,
+        query,
+        len(result.matches),
+        output,
+        len(payload),
+    )
     return payload
 
 
@@ -414,24 +404,14 @@ def _doctor(
         return serialized
     payload = serialized
     assert isinstance(payload, str)
-    if output == "json":
-        logger.debug(
-            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-            query,
-            result.lookup.geofeed_url,
-            len(result.matches),
-            output,
-            len(payload),
-        )
-    else:
-        logger.debug(
-            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-            query,
-            result.lookup.geofeed_url,
-            len(result.matches),
-            output,
-            len(payload),
-        )
+    logger.debug(
+        "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+        query,
+        result.lookup.geofeed_url,
+        len(result.matches),
+        output,
+        len(payload),
+    )
     return payload
 
 
@@ -463,29 +443,19 @@ def _lookup(
         return serialized
     payload = serialized
     assert isinstance(payload, str)
-    if output == "json":
-        logger.debug(
-            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-            query,
-            result.lookup.geofeed_url,
-            len(query_result.matches),
-            output,
-            len(payload),
-        )
-    else:
-        logger.debug(
-            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-            query,
-            result.lookup.geofeed_url,
-            len(query_result.matches),
-            output,
-            len(payload),
-        )
+    logger.debug(
+        "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
+        query,
+        result.lookup.geofeed_url,
+        len(query_result.matches),
+        output,
+        len(payload),
+    )
     return payload
 
 
 class _GeoFeedBase:
-    """Shared state and cache helpers for sync and async geofeed APIs."""
+    """Shared state, cache helpers, and CPU-bound work for sync and async geofeed APIs."""
 
     def __init__(self, source: str, *, cache_query_index: bool = True) -> None:
         self.source = source
@@ -514,6 +484,103 @@ class _GeoFeedBase:
 
     def _store_query_index(self, index: QueryIndex) -> QueryIndex:
         return self._query_index_state.store(index)
+
+    # ------------------------------------------------------------------
+    # CPU-bound work methods — called after loading; safe for to_thread.
+    # ------------------------------------------------------------------
+
+    def _do_parse(
+        self,
+        *,
+        include_validation: bool = True,
+        normalize: bool = False,
+        output: str = "objects",
+    ) -> list[GeofeedRecord] | str:
+        assert self.raw is not None
+        assert self.text is not None
+        return _parse_loaded(
+            self.source,
+            self.raw,
+            self.text,
+            self.content_type,
+            include_validation=include_validation,
+            normalize=normalize,
+            output=output,
+        )
+
+    def _do_validate(
+        self,
+        *,
+        check_sort: bool = True,
+        check_content_type: bool = True,
+        check_aggregation: bool = False,
+        output: str = "objects",
+    ) -> ValidationReport | str:
+        assert self.raw is not None
+        return _validate_loaded(
+            self.source,
+            self.raw,
+            self.content_type,
+            check_sort=check_sort,
+            check_content_type=check_content_type,
+            check_aggregation=check_aggregation,
+            output=output,
+        )
+
+    def _do_normalize(
+        self,
+        *,
+        uppercase: bool = True,
+        sort: bool = True,
+        aggregate: bool = True,
+        dedupe: bool = True,
+        fix_host_bits: bool = True,
+        output: str = "objects",
+    ) -> list[GeofeedRecord] | str:
+        assert self.text is not None
+        return _normalize_loaded(
+            self.source,
+            self.text,
+            uppercase=uppercase,
+            sort=sort,
+            aggregate=aggregate,
+            dedupe=dedupe,
+            fix_host_bits=fix_host_bits,
+            output=output,
+        )
+
+    def _do_query(
+        self,
+        query: str,
+        *,
+        return_all: bool = False,
+        include_longer: bool = False,
+        output: str = "objects",
+    ) -> QueryResult | str:
+        assert self.text is not None
+        indexed_records = self._get_cached_query_index()
+        if indexed_records is None and self._cache_query_index:
+            indexed_records = self._store_query_index(load_query_records(self.text))
+        return _query_loaded(
+            self.source,
+            self.text,
+            query,
+            return_all=return_all,
+            include_longer=include_longer,
+            output=output,
+            indexed_records=indexed_records,
+        )
+
+    def _do_info(self, *, output: str = "objects") -> GeoFeedInfo | str:
+        assert self.raw is not None
+        assert self.text is not None
+        return _info_loaded(
+            self.source,
+            self.raw,
+            self.text,
+            self.content_type,
+            output=output,
+        )
 
 
 class GeoFeed(_GeoFeedBase):
@@ -545,15 +612,12 @@ class GeoFeed(_GeoFeedBase):
             content_type,
         )
 
-    def _ensure_loaded(self) -> tuple[bytes, str]:
+    def _ensure_loaded(self) -> None:
         if self.raw is None or self.text is None:
             logger.debug("Geofeed source not loaded yet; performing lazy load: %s", self.source)
             self.reload()
         else:
             logger.log(TRACE_LEVEL, "Using cached geofeed source: %s", self.source)
-        assert self.raw is not None
-        assert self.text is not None
-        return self.raw, self.text
 
     def parse(
         self,
@@ -563,16 +627,8 @@ class GeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         """Parse the source into records and optionally serialize the result."""
-        raw, text = self._ensure_loaded()
-        return _parse_loaded(
-            self.source,
-            raw,
-            text,
-            self.content_type,
-            include_validation=include_validation,
-            normalize=normalize,
-            output=output,
-        )
+        self._ensure_loaded()
+        return self._do_parse(include_validation=include_validation, normalize=normalize, output=output)
 
     def validate(
         self,
@@ -583,11 +639,8 @@ class GeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> ValidationReport | str:
         """Validate the source bytes and optionally serialize the report."""
-        raw, _text = self._ensure_loaded()
-        return _validate_loaded(
-            self.source,
-            raw,
-            self.content_type,
+        self._ensure_loaded()
+        return self._do_validate(
             check_sort=check_sort,
             check_content_type=check_content_type,
             check_aggregation=check_aggregation,
@@ -605,10 +658,8 @@ class GeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         """Normalize records from the source and optionally serialize them."""
-        _raw, text = self._ensure_loaded()
-        return _normalize_loaded(
-            self.source,
-            text,
+        self._ensure_loaded()
+        return self._do_normalize(
             uppercase=uppercase,
             sort=sort,
             aggregate=aggregate,
@@ -626,19 +677,8 @@ class GeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> QueryResult | str:
         """Query the source for an IP or prefix and return matching records."""
-        _raw, text = self._ensure_loaded()
-        indexed_records = self._get_cached_query_index()
-        if indexed_records is None and self._cache_query_index:
-            indexed_records = self._store_query_index(load_query_records(text))
-        return _query_loaded(
-            self.source,
-            text,
-            query,
-            return_all=return_all,
-            include_longer=include_longer,
-            output=output,
-            indexed_records=indexed_records,
-        )
+        self._ensure_loaded()
+        return self._do_query(query, return_all=return_all, include_longer=include_longer, output=output)
 
     @staticmethod
     def doctor(
@@ -681,14 +721,8 @@ class GeoFeed(_GeoFeedBase):
 
     def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate statistics for the current geofeed source."""
-        raw, text = self._ensure_loaded()
-        return _info_loaded(
-            self.source,
-            raw,
-            text,
-            self.content_type,
-            output=output,
-        )
+        self._ensure_loaded()
+        return self._do_info(output=output)
 
 
 __all__ = ["FetchError", "GeoFeed", "GeoFeedDiscoveryError"]

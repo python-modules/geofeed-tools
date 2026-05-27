@@ -144,6 +144,7 @@ from geofeed_tools import AsyncGeoFeed
 
 geofeed = AsyncGeoFeed("https://api.cloudflare.com/local-ip-ranges.csv")
 
+# Loading is lazy by default; the first awaited operation fetches the source
 # Methods mirror GeoFeed, but are awaitable
 records = await geofeed.parse()
 report = await geofeed.validate(check_aggregation=True)
@@ -180,6 +181,8 @@ from geofeed_tools import (
 
 `AsyncGeoFeed` is the native async counterpart to `GeoFeed` for library users who want to integrate geofeed processing into an asyncio application.
 
+Unlike `GeoFeed`, `AsyncGeoFeed` does not have an `auto_load` constructor flag. Instances load lazily on the first awaited operation, or eagerly via `await AsyncGeoFeed.from_source(...)`.
+
 Constructor:
 
 ```python
@@ -210,6 +213,7 @@ Available async methods:
 Behavior notes:
 
 - `AsyncGeoFeed` accepts the same flags and output modes as `GeoFeed` for `parse()`, `validate()`, `normalize()`, `query()`, and `info()`.
+- `AsyncGeoFeed(source, ...)` is lazy-loaded. Use `await AsyncGeoFeed.from_source(...)` when you want construction and loading in one step.
 - `cache_query_index=False` disables per-instance query-index caching for repeated `await query(...)` calls.
 - `AsyncGeoFeed.doctor()` is a static async helper that performs RDAP discovery, fetches the published geofeed, and returns structured lookup metadata together with the geofeed matches.
 - `AsyncGeoFeed.lookup()` is the async counterpart to `GeoFeed.lookup()`: it performs the same RDAP discovery flow but returns only `QueryResult` data.
@@ -697,7 +701,7 @@ geofeed-tools validate --help
 	- `-v`: INFO
 	- `-vv`: DEBUG
 	- `-vvv`: TRACE
-- CLI support is optional. If the CLI extra is not installed, running the command exits with a message telling you to install `.[cli]`.
+- CLI support is optional. If the CLI extra is not installed, running the command exits with a message telling you to install `geofeed-tools[cli]`.
 
 ### Command Reference
 

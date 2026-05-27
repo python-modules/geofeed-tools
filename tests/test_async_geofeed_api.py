@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import geofeed_tools.async_core as async_core_module
+import geofeed_tools.core as core_module
 from geofeed_tools import AsyncGeoFeed
 
 
@@ -125,14 +125,14 @@ def test_async_query_reuses_index_until_reload(monkeypatch) -> None:
     """AsyncGeoFeed query should reuse indexed records until source reload."""
     call_count = 0
 
-    real_loader = async_core_module.load_query_records
+    real_loader = core_module.load_query_records
 
     def counting_loader(text: str):
         nonlocal call_count
         call_count += 1
         return real_loader(text)
 
-    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+    monkeypatch.setattr("geofeed_tools.core.load_query_records", counting_loader)
 
     async def scenario() -> int:
         geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"))
@@ -154,14 +154,14 @@ def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
     """AsyncGeoFeed should skip caching when cache_query_index=False."""
     call_count = 0
 
-    real_loader = async_core_module.load_query_records
+    real_loader = core_module.load_query_records
 
     def counting_loader(text: str):
         nonlocal call_count
         call_count += 1
         return real_loader(text)
 
-    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+    monkeypatch.setattr("geofeed_tools.core.load_query_records", counting_loader)
 
     async def scenario() -> int:
         geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"), cache_query_index=False)

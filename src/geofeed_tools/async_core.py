@@ -8,13 +8,8 @@ from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .core import (
     _build_lookup_result,
     _GeoFeedBase,
-    _info_loaded,
-    _normalize_loaded,
-    _parse_loaded,
-    _query_loaded,
     _serialize_doctor_result,
     _serialize_query_result,
-    _validate_loaded,
 )
 from .doctor import doctor_query_async
 from .loader import FetchError, load_input_async, source_kind
@@ -27,7 +22,6 @@ from .models import (
     QueryResult,
     ValidationReport,
 )
-from .query import load_query_records
 
 
 class AsyncGeoFeed(_GeoFeedBase):
@@ -63,15 +57,12 @@ class AsyncGeoFeed(_GeoFeedBase):
             content_type,
         )
 
-    async def _ensure_loaded(self) -> tuple[bytes, str]:
+    async def _ensure_loaded(self) -> None:
         if self.raw is None or self.text is None:
             logger.debug("Async geofeed source not loaded yet; performing lazy load: %s", self.source)
             await self.reload()
         else:
             logger.log(TRACE_LEVEL, "Using cached async geofeed source: %s", self.source)
-        assert self.raw is not None
-        assert self.text is not None
-        return self.raw, self.text
 
     async def parse(
         self,
@@ -81,17 +72,8 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         """Parse the source asynchronously and optionally serialize the result."""
-        raw, text = await self._ensure_loaded()
-        return await asyncio.to_thread(
-            _parse_loaded,
-            self.source,
-            raw,
-            text,
-            self.content_type,
-            include_validation=include_validation,
-            normalize=normalize,
-            output=output,
-        )
+        await self._ensure_loaded()
+        return await asyncio.to_thread(self._do_parse, include_validation=include_validation, normalize=normalize, output=output)
 
     async def validate(
         self,
@@ -102,12 +84,9 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> ValidationReport | str:
         """Validate the source asynchronously and optionally serialize the report."""
-        raw, _text = await self._ensure_loaded()
+        await self._ensure_loaded()
         return await asyncio.to_thread(
-            _validate_loaded,
-            self.source,
-            raw,
-            self.content_type,
+            self._do_validate,
             check_sort=check_sort,
             check_content_type=check_content_type,
             check_aggregation=check_aggregation,
@@ -125,11 +104,9 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         """Normalize records asynchronously and optionally serialize them."""
-        _raw, text = await self._ensure_loaded()
+        await self._ensure_loaded()
         return await asyncio.to_thread(
-            _normalize_loaded,
-            self.source,
-            text,
+            self._do_normalize,
             uppercase=uppercase,
             sort=sort,
             aggregate=aggregate,
@@ -147,20 +124,8 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> QueryResult | str:
         """Query the source asynchronously for an IP or prefix."""
-        _raw, text = await self._ensure_loaded()
-        indexed_records = self._get_cached_query_index()
-        if indexed_records is None and self._cache_query_index:
-            indexed_records = self._store_query_index(await asyncio.to_thread(load_query_records, text))
-        return await asyncio.to_thread(
-            _query_loaded,
-            self.source,
-            text,
-            query,
-            return_all=return_all,
-            include_longer=include_longer,
-            output=output,
-            indexed_records=indexed_records,
-        )
+        await self._ensure_loaded()
+        return await asyncio.to_thread(self._do_query, query, return_all=return_all, include_longer=include_longer, output=output)
 
     @staticmethod
     async def doctor(
@@ -204,15 +169,9 @@ class AsyncGeoFeed(_GeoFeedBase):
 
     async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
         """Compute aggregate geofeed statistics asynchronously."""
-        raw, text = await self._ensure_loaded()
-        return await asyncio.to_thread(
-            _info_loaded,
-            self.source,
-            raw,
-            text,
-            self.content_type,
-            output=output,
-        )
+        await self._ensure_loaded()
+        return await asyncio.to_thread(self._do_info, output=output)
 
 
 __all__ = ["AsyncGeoFeed", "FetchError", "GeoFeedDiscoveryError"]
+
