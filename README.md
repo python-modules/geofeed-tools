@@ -8,6 +8,7 @@
   - [Python API](#python-api)
     - [Quick Start](#quick-start)
     - [Public Imports](#public-imports)
+    - [`AsyncGeoFeed`](#asyncgeofeed)
     - [`GeoFeed`](#geofeed)
       - [Constructor](#constructor)
       - [`reload()`](#reload)
@@ -33,6 +34,8 @@
       - [`query`](#query-1)
       - [`info`](#info-1)
       - [`hook`](#hook)
+    - [GitHub Actions Integration](#github-actions-integration)
+      - [How To Use It In Another Repository](#how-to-use-it-in-another-repository)
   - [Testing](#testing)
     - [HTML test reports](#html-test-reports)
     - [Test Notes](#test-notes)
@@ -58,6 +61,12 @@ To install the full library including the CLI:
 
 ```bash
 uv pip install 'geofeed-tools[cli]'
+```
+
+To install the library with async HTTP support for `AsyncGeoFeed` URL loading:
+
+```bash
+uv pip install 'geofeed-tools[async]'
 ```
 
 Install development dependencies:
@@ -97,12 +106,29 @@ all_matches = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True
 summary = geofeed.info()
 ```
 
+Async quick start:
+
+```python
+from geofeed_tools import AsyncGeoFeed
+
+geofeed = AsyncGeoFeed("https://api.cloudflare.com/local-ip-ranges.csv")
+
+# Methods mirror GeoFeed, but are awaitable
+records = await geofeed.parse()
+report = await geofeed.validate(check_aggregation=True)
+summary = await geofeed.info()
+
+# Or eagerly load first with the async factory
+preloaded = await AsyncGeoFeed.from_source("https://api.cloudflare.com/local-ip-ranges.csv")
+```
+
 ### Public Imports
 
 The top-level package exports the main API object plus the public dataclasses:
 
 ```python
 from geofeed_tools import (
+  AsyncGeoFeed,
 	GeoFeed,
 	GeoFeedInfo,
 	GeofeedRecord,
@@ -111,6 +137,38 @@ from geofeed_tools import (
 	ValidationReport,
 )
 ```
+
+### `AsyncGeoFeed`
+
+`AsyncGeoFeed` is the native async counterpart to `GeoFeed` for library users who want to integrate geofeed processing into an asyncio application.
+
+Constructor:
+
+```python
+AsyncGeoFeed(source: str)
+```
+
+Async factory for eager loading:
+
+```python
+await AsyncGeoFeed.from_source(source: str) -> AsyncGeoFeed
+```
+
+Available async methods:
+
+- `await reload() -> None`
+- `await parse(...) -> list[GeofeedRecord] | str`
+- `await validate(...) -> ValidationReport | str`
+- `await normalize(...) -> list[GeofeedRecord] | str`
+- `await query(...) -> QueryResult | str`
+- `await info(...) -> GeoFeedInfo | str`
+
+Behavior notes:
+
+- `AsyncGeoFeed` accepts the same flags and output modes as `GeoFeed` for `parse()`, `validate()`, `normalize()`, `query()`, and `info()`.
+- Local file loading is performed asynchronously via thread offloading.
+- Remote URL loading uses async HTTP and requires the `geofeed-tools[async]` extra.
+- Parsing, validation, normalization, querying, and info generation run off the event loop in worker threads so library consumers can use the API without blocking the loop on large feeds.
 
 ### `GeoFeed`
 
@@ -430,6 +488,12 @@ geofeed-tools validate geofeeds.csv
 # Dump parsed records as JSON
 geofeed-tools dump geofeeds.csv
 
+# Dump parsed records as geofeed CSV
+geofeed-tools dump geofeeds.csv --format csv
+
+# Dump parsed records as a table
+geofeed-tools dump geofeeds.csv --format table
+
 # Normalize to canonical CSV and write to a file
 geofeed-tools normalize geofeeds.csv --output normalized.csv
 
@@ -509,22 +573,28 @@ Parse the geofeed and print records as a JSON array.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `--format`, `-f` | `json` | Output format: `json`, `csv`, or `table`. |
 | `--normalize` | off | Normalize records before dumping them. |
-| `--no-validation` | off | Skip per-record validation annotations in the JSON output. |
+| `--no-validation` | off | Skip per-record validation annotations in JSON or table output. |
 | `-v`, `--verbose` | `0` | Increase log verbosity. |
 
 Examples:
 
 ```bash
 geofeed-tools dump geofeeds.csv
+geofeed-tools dump geofeeds.csv --format csv
+geofeed-tools dump geofeeds.csv --format table
 geofeed-tools dump geofeeds.csv --no-validation
 geofeed-tools dump geofeeds.csv --normalize
 ```
 
 Output notes:
 
-- Output is always JSON.
-- By default, each record includes `valid` and `validation_messages` fields.
+- Default output is JSON.
+- `--format csv` emits standard 5-column geofeed rows.
+- `--format table` emits a GitHub-style table rendered with `tabulate`.
+- By default, JSON and table output include `valid` and `validation_messages` fields.
+- `--no-validation` affects JSON and table output only. CSV output always uses plain geofeed rows.
 - With `--normalize`, the output reflects normalized records rather than the original parsed rows.
 
 #### `normalize`
@@ -655,6 +725,43 @@ Output and exit notes:
 - By default, the command fails only on errors.
 - With `--strict`, the command also fails on warnings.
 - Success summary format is `hook: OK ...`; failure summary format is `hook: FAIL ...`.
+
+### GitHub Actions Integration
+
+The `hook` command is designed to work well as a CI quality gate. This repository publishes a reusable workflow at [.github/workflows/geofeed-validation.yml](.github/workflows/geofeed-validation.yml) and also includes a caller example at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml).
+
+#### How To Use It In Another Repository
+
+Create a small workflow in your repository that calls the shared workflow with `uses`:
+
+```yaml
+name: Validate geofeed
+
+on:
+  pull_request:
+    paths:
+      - "path/to/geofeed.csv"
+  push:
+    branches:
+      - main
+    paths:
+      - "path/to/geofeed.csv"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  geofeed-validation:
+    uses: python-modules/geofeed-tools/.github/workflows/geofeed-validation.yml@main
+    with:
+      geofeed_path: path/to/geofeed.csv
+      strict: false
+```
+
+Replace `path/to/geofeed.csv` with the tracked geofeed file path in your repository.
+
+The above example disables strict mode validation - warnings are logged but permitted. To require strict mode validation set `strict` to `true`.
 
 ## Testing
 

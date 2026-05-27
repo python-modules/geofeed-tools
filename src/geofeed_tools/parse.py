@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import csv
 
+from .logging import TRACE_LEVEL, logger
 from .models import GeofeedRecord
 from .parsing import iter_data_lines, normalize_fields, parse_record
 from .validate import validate_bytes
@@ -13,13 +14,28 @@ from .validate import validate_bytes
 def parse_text(text: str) -> list[GeofeedRecord]:
     """Parse text into geofeed records, skipping malformed rows."""
     records: list[GeofeedRecord] = []
+    skipped_csv_errors = 0
+    skipped_missing_prefix = 0
     for lineno, data in iter_data_lines(text):
         try:
             fields = parse_record(data)
-        except csv.Error:
+        except csv.Error as exc:
+            skipped_csv_errors += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during parse due to CSV error: line=%d error=%s",
+                lineno,
+                exc,
+            )
             continue
         prefix, country, region, city, postal = normalize_fields(fields)
         if not prefix:
+            skipped_missing_prefix += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during parse due to missing prefix: line=%d",
+                lineno,
+            )
             continue
         records.append(
             GeofeedRecord(
@@ -31,6 +47,12 @@ def parse_text(text: str) -> list[GeofeedRecord]:
                 line=lineno,
             )
         )
+    logger.debug(
+        "Parsed raw geofeed text into records: records=%d skipped_csv_errors=%d skipped_missing_prefix=%d",
+        len(records),
+        skipped_csv_errors,
+        skipped_missing_prefix,
+    )
     return records
 
 
@@ -42,6 +64,11 @@ def annotate_validity(
     content_type: str | None,
 ) -> list[GeofeedRecord]:
     """Annotate parsed records with error-derived validity flags."""
+    logger.debug(
+        "Annotating parsed geofeed records with validation results: source=%s records=%d",
+        source,
+        len(records),
+    )
     report = validate_bytes(
         raw,
         source,
@@ -71,5 +98,13 @@ def annotate_validity(
                 validation_messages=messages,
             )
         )
+
+    invalid_records = sum(1 for record in out if not record.valid)
+    logger.debug(
+        "Annotated parsed geofeed records with validation results: source=%s records=%d invalid_records=%d",
+        source,
+        len(out),
+        invalid_records,
+    )
 
     return out

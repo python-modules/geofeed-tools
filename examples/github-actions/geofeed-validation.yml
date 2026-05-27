@@ -1,0 +1,24 @@
+name: Validate geofeed
+
+on:
+  pull_request:
+    # Path filters are evaluated in the caller workflow, so they cannot come
+    # from workflow_call inputs on the shared workflow.
+    paths:
+      - "path/to/geofeed.csv"
+  push:
+    branches:
+      - main
+    paths:
+      - "path/to/geofeed.csv"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  geofeed-validation:
+    uses: python-modules/geofeed-tools/.github/workflows/geofeed-validation.yml@main
+    with:
+      geofeed_path: path/to/geofeed.csv
+      strict: true

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 
+from .logging import logger
 from .models import GeoFeedInfo, GeofeedRecord, ValidationReport
 
 
@@ -13,6 +14,12 @@ def build_info(
     report: ValidationReport | None = None,
 ) -> GeoFeedInfo:
     """Build aggregate geofeed statistics from records and validation."""
+    logger.debug(
+        "Building geofeed summary statistics: source=%s records=%d has_validation_report=%s",
+        source,
+        len(records),
+        report is not None,
+    )
     unique_prefixes = {record.prefix for record in records}
 
     ipv4 = 0
@@ -43,7 +50,7 @@ def build_info(
     errors = report.errors if report is not None else 0
     warnings = report.warnings if report is not None else 0
 
-    return GeoFeedInfo(
+    info = GeoFeedInfo(
         source=source,
         total_records=len(records),
         unique_prefixes=len(unique_prefixes),
@@ -57,3 +64,13 @@ def build_info(
         errors=errors,
         warnings=warnings,
     )
+    logger.debug(
+        "Built geofeed summary statistics: source=%s total_records=%d unique_prefixes=%d duplicates=%d errors=%d warnings=%d",
+        source,
+        info.total_records,
+        info.unique_prefixes,
+        info.duplicates,
+        info.errors,
+        info.warnings,
+    )
+    return info

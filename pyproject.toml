@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geofeed-tools"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tools for parsing, validating, normalizing, querying, and inspecting RFC 8805 geofeeds"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -37,12 +37,16 @@ Homepage = 'https://github.com/python-modules/geofeed-tools'
 Issues = "https://github.com/python-modules/geofeed-tools/issues"
 
 [project.optional-dependencies]
+async = [
+  "httpx>=0.28.0",
+]
 cli = [
   "typer>=0.12.0",
   "structlog>=24.0.0",
   "tabulate>=0.9.0",
 ]
 dev = [
+  "httpx>=0.28.0",
   "pytest>=8.0.0",
   "pytest-cov>=5.0.0",
   "pytest-html>=4.1.0",

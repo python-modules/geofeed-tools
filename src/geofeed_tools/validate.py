@@ -6,14 +6,16 @@ import collections
 import csv
 import dataclasses
 import ipaddress
+from functools import lru_cache
 
 import pycountry
 
 from .loader import is_url
+from .logging import TRACE_LEVEL, logger
 from .models import ValidationIssue, ValidationReport
 from .parsing import (
     MAX_FIELDS,
-    iter_data_lines,
+    iter_data_lines_with_raw,
     normalize_fields,
     parse_record,
 )
@@ -30,14 +32,28 @@ class _ValidationState:
         self.records_for_aggregation: list[tuple[Network, tuple[str, str, str, str], int]] = []
 
 
+def _trace_new_issues(issues: list[ValidationIssue], start_index: int) -> None:
+    """Emit trace logs for newly appended validation issues."""
+    if not logger.isEnabledFor(TRACE_LEVEL):
+        return
+    for issue in issues[start_index:]:
+        logger.log(
+            TRACE_LEVEL,
+            "Validation issue detected: severity=%s line=%s code=%s message=%s",
+            issue.severity,
+            issue.line,
+            issue.code,
+            issue.message,
+        )
+
+
 def find_aggregations(
     records: list[tuple[Network, tuple[str, str, str, str], int]],
 ) -> list[ValidationIssue]:
     """Return warnings for prefixes that can be merged safely."""
     issues: list[ValidationIssue] = []
     for net_to_lines in _aggregation_groups(records):
-        for issue in _group_aggregation_issues(net_to_lines):
-            issues.append(issue)
+        issues.extend(_group_aggregation_issues(net_to_lines))
 
     issues.sort(
         key=lambda issue: (
@@ -154,13 +170,19 @@ def _collapse_same_version(unique: list[Network]) -> list[Network]:
     """Collapse a same-version network list with stable typing."""
     if not unique:
         return []
+    return list(ipaddress.collapse_addresses(unique))
 
-    if isinstance(unique[0], ipaddress.IPv4Network):
-        ipv4_nets = [net for net in unique if isinstance(net, ipaddress.IPv4Network)]
-        return list(ipaddress.collapse_addresses(ipv4_nets))
 
-    ipv6_nets = [net for net in unique if isinstance(net, ipaddress.IPv6Network)]
-    return list(ipaddress.collapse_addresses(ipv6_nets))
+@lru_cache(maxsize=512)
+def _lookup_country(alpha2: str):
+    """Return cached ISO 3166-1 country lookup results."""
+    return pycountry.countries.get(alpha_2=alpha2)
+
+
+@lru_cache(maxsize=4096)
+def _lookup_subdivision(code: str):
+    """Return cached ISO 3166-2 subdivision lookup results."""
+    return pycountry.subdivisions.get(code=code)
 
 
 def validate_bytes(
@@ -173,20 +195,36 @@ def validate_bytes(
     check_aggregation: bool = False,
 ) -> ValidationReport:
     """Validate geofeed bytes and return a structured report."""
+    logger.debug(
+        "Running validation engine: source=%s bytes=%d check_sort=%s check_content_type=%s check_aggregation=%s",
+        source,
+        len(raw),
+        check_sort,
+        check_content_type,
+        check_aggregation,
+    )
     issues: list[ValidationIssue] = []
+    issue_start = len(issues)
     _add_content_type_issue(
         issues,
         source,
         content_type,
         check_content_type,
     )
+    _trace_new_issues(issues, issue_start)
 
+    issue_start = len(issues)
     text = _decode_for_validation(raw, issues)
+    _trace_new_issues(issues, issue_start)
     if text is None:
+        logger.debug("Validation stopped before record scanning due to decode failure: source=%s", source)
         return _report_from_issues(source, 0, issues)
 
     state = _ValidationState()
-    for lineno, data in iter_data_lines(text):
+    raw_lines_by_number: dict[int, str] = {}
+    for lineno, raw_line, data in iter_data_lines_with_raw(text):
+        raw_lines_by_number[lineno] = raw_line
+        issue_start = len(issues)
         _validate_data_line(
             lineno,
             data,
@@ -195,18 +233,24 @@ def validate_bytes(
             check_sort,
             check_aggregation,
         )
+        _trace_new_issues(issues, issue_start)
 
     if check_aggregation:
+        issue_start = len(issues)
         issues.extend(find_aggregations(state.records_for_aggregation))
+        _trace_new_issues(issues, issue_start)
 
-    if text is not None:
-        line_map = dict(enumerate(text.splitlines(), start=1))
-        issues = [
-            dataclasses.replace(issue, raw_line=line_map.get(issue.line)) if issue.line is not None else issue
-            for issue in issues
-        ]
+    issues = _attach_raw_lines(issues, raw_lines_by_number)
 
-    return _report_from_issues(source, state.record_count, issues)
+    report = _report_from_issues(source, state.record_count, issues)
+    logger.debug(
+        "Validation engine completed: source=%s records=%d errors=%d warnings=%d",
+        source,
+        report.records,
+        report.errors,
+        report.warnings,
+    )
+    return report
 
 
 def _add_content_type_issue(
@@ -418,7 +462,7 @@ def _validate_country(
             )
         )
 
-    if pycountry.countries.get(alpha_2=country_norm):
+    if _lookup_country(country_norm):
         return country_norm
 
     issues.append(
@@ -453,7 +497,7 @@ def _validate_region(
             )
         )
 
-    subdivision = pycountry.subdivisions.get(code=region_norm)
+    subdivision = _lookup_subdivision(region_norm)
     if subdivision is None:
         issues.append(
             ValidationIssue(
@@ -517,6 +561,19 @@ def _report_from_issues(
         valid=errors == 0,
         issues=tuple(issues),
     )
+
+
+def _attach_raw_lines(
+    issues: list[ValidationIssue],
+    raw_lines_by_number: dict[int, str],
+) -> list[ValidationIssue]:
+    """Attach source raw lines to line-scoped issues when available."""
+    return [
+        dataclasses.replace(issue, raw_line=raw_lines_by_number.get(issue.line))
+        if issue.line is not None and issue.raw_line is None
+        else issue
+        for issue in issues
+    ]
 
 
 def render_validation_text(report: ValidationReport) -> str:

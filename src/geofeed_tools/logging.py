@@ -34,14 +34,16 @@ def configure_logging(verbosity: int = 0) -> None:
     level = _verbosity_to_level(verbosity)
 
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
 
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
-    root.setLevel(logging.WARNING)
+    root.setLevel(TRACE_LEVEL if level <= TRACE_LEVEL else logging.WARNING)
 
     logger.setLevel(level)
+    if level <= TRACE_LEVEL:
+        _enable_http_trace_logging()
 
 
 def configure_cli_structlog(verbosity: int = 0) -> None:
@@ -51,21 +53,43 @@ def configure_cli_structlog(verbosity: int = 0) -> None:
 
     level = _verbosity_to_level(verbosity)
 
-    logging.basicConfig(level=level, format="%(message)s", stream=sys.stderr)
+    timestamper = structlog.processors.TimeStamper(fmt="%H:%M:%S")
+    shared_processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        timestamper,
+    ]
+    renderer = structlog.dev.ConsoleRenderer(
+        colors=True,
+        pad_event_to=32,
+        sort_keys=False,
+    )
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
+    )
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(TRACE_LEVEL if level <= TRACE_LEVEL else logging.WARNING)
+
+    logger.setLevel(level)
     if level <= TRACE_LEVEL:
         _enable_http_trace_logging()
 
     structlog.configure(
         processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.set_exc_info,
-            structlog.dev.ConsoleRenderer(
-                colors=True,
-                pad_event=30,
-                sort_keys=True,
-            ),
+            *shared_processors,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
