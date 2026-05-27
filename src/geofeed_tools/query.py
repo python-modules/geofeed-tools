@@ -159,12 +159,10 @@ def query_text(
         include_longer=include_longer,
         return_all=return_all,
     )
-    original_match_count = len(matches)
     logger.debug(
-        "Resolved geofeed query: query=%s indexed_records=%d matches=%d returned=%d include_longer=%s return_all=%s",
+        "Resolved geofeed query: query=%s indexed_records=%d matches=%d include_longer=%s return_all=%s",
         query,
         len(records),
-        original_match_count,
         len(matches),
         include_longer,
         return_all,
