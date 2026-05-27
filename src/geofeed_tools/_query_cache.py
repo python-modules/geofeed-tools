@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import GeofeedRecord
-from .query import Network
-
-QueryIndex = list[tuple[Network, GeofeedRecord]]
+from .query import QueryIndex
 
 
 @dataclass(slots=True)

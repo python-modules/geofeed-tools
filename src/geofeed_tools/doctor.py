@@ -8,8 +8,8 @@ import ipaddress
 from .io_utils import records_to_csv
 from .loader import decode_text, load_input, load_input_async
 from .logging import logger
-from .models import DoctorResult, GeofeedRecord
-from .query import Network, load_query_records, query_text
+from .models import DoctorResult
+from .query import QueryIndex, filter_query_index, load_query_records, query_text
 from .rdap import (
     RDAP_ORG_METHOD,
     resolve_geofeed_lookup,
@@ -17,7 +17,6 @@ from .rdap import (
 )
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
-QueryIndex = list[tuple[Network, GeofeedRecord]]
 
 
 def _filter_records_to_referring_range(
@@ -26,21 +25,7 @@ def _filter_records_to_referring_range(
     end: IPAddress | None,
 ) -> QueryIndex:
     """Keep only records fully covered by the referring RDAP object range."""
-    if start is None or end is None:
-        return records
-
-    filtered: QueryIndex = []
-    start_value = int(start)
-    end_value = int(end)
-    for network, record in records:
-        if network.version != start.version:
-            continue
-        if int(network.network_address) < start_value:
-            continue
-        if int(network.broadcast_address) > end_value:
-            continue
-        filtered.append((network, record))
-    return filtered
+    return filter_query_index(records, start=start, end=end)
 
 
 def doctor_query(

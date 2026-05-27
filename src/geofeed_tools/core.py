@@ -17,7 +17,7 @@ from .loader import FetchError, decode_text, load_input, source_kind
 from .logging import TRACE_LEVEL, logger
 from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, GeoFeedDiscoveryError, QueryResult, ValidationReport
 from .normalize import normalize_records
-from .parse import annotate_validity, parse_text
+from .parse import annotate_validity, parse_text, parse_text_with_networks
 from .query import load_query_records, query_text
 from .validate import render_validation_text, validate_bytes
 
@@ -356,20 +356,13 @@ def _info_loaded(
 ) -> GeoFeedInfo | str:
     _validate_output(output, ("objects", "json"))
     logger.info("Computing geofeed summary: %s", source)
-    records = _build_parsed_records(
-        source,
-        raw,
-        text,
-        content_type,
-        include_validation=False,
-        normalize=False,
-    )
+    records, networks = parse_text_with_networks(text)
     report = _build_validation_report(
         source,
         raw,
         content_type,
     )
-    info = build_info(source, records, report)
+    info = build_info(source, records, report, networks=networks)
     if output == "objects":
         logger.debug(
             "Computed geofeed summary: source=%s total_records=%d errors=%d warnings=%d output=%s",

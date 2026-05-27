@@ -3,10 +3,42 @@
 from __future__ import annotations
 
 import csv
-import io
+import threading
 from collections.abc import Iterable
 
 MAX_FIELDS = 5
+
+
+class _ReusableCSVLineSource:
+    """Single-line iterable backing a reusable csv.reader instance."""
+
+    def __init__(self) -> None:
+        self._line = ""
+        self._ready = False
+
+    def set_line(self, line: str) -> None:
+        self._line = line
+        self._ready = True
+
+    def __iter__(self) -> _ReusableCSVLineSource:
+        return self
+
+    def __next__(self) -> str:
+        if not self._ready:
+            raise StopIteration
+        self._ready = False
+        return self._line
+
+
+class _ThreadLocalCSVParser(threading.local):
+    """Per-thread reusable single-record CSV parser."""
+
+    def __init__(self) -> None:
+        self.source = _ReusableCSVLineSource()
+        self.reader = csv.reader(self.source)
+
+
+_CSV_PARSER = _ThreadLocalCSVParser()
 
 
 def split_comment(line: str) -> str:
@@ -29,7 +61,8 @@ def split_comment(line: str) -> str:
 
 def parse_record(data_line: str) -> list[str]:
     """Parse one CSV data line into fields."""
-    return next(csv.reader(io.StringIO(data_line)))
+    _CSV_PARSER.source.set_line(data_line)
+    return next(_CSV_PARSER.reader)
 
 
 def iter_data_lines(text: str) -> Iterable[tuple[int, str]]:

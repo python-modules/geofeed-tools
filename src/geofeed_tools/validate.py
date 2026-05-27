@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import collections
 import csv
-import dataclasses
 import ipaddress
 from functools import lru_cache
 
@@ -21,6 +20,7 @@ from .parsing import (
 )
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+AggregationRecord = tuple[Network, tuple[str, str, str, str], int, str]
 
 
 class _ValidationState:
@@ -29,7 +29,7 @@ class _ValidationState:
     def __init__(self) -> None:
         self.record_count = 0
         self.prev_by_version: dict[int, Network] = {}
-        self.records_for_aggregation: list[tuple[Network, tuple[str, str, str, str], int]] = []
+        self.records_for_aggregation: list[AggregationRecord] = []
 
 
 def _trace_new_issues(issues: list[ValidationIssue], start_index: int) -> None:
@@ -47,8 +47,29 @@ def _trace_new_issues(issues: list[ValidationIssue], start_index: int) -> None:
         )
 
 
+def _append_issue(
+    issues: list[ValidationIssue],
+    *,
+    severity: str,
+    line: int | None,
+    code: str,
+    message: str,
+    raw_line: str | None = None,
+) -> None:
+    """Append one validation issue."""
+    issues.append(
+        ValidationIssue(
+            severity=severity,
+            line=line,
+            code=code,
+            message=message,
+            raw_line=raw_line,
+        )
+    )
+
+
 def find_aggregations(
-    records: list[tuple[Network, tuple[str, str, str, str], int]],
+    records: list[AggregationRecord],
 ) -> list[ValidationIssue]:
     """Return warnings for prefixes that can be merged safely."""
     issues: list[ValidationIssue] = []
@@ -65,25 +86,25 @@ def find_aggregations(
 
 
 def _aggregation_groups(
-    records: list[tuple[Network, tuple[str, str, str, str], int]],
-) -> list[dict[Network, list[int]]]:
+    records: list[AggregationRecord],
+) -> list[dict[Network, list[tuple[int, str]]]]:
     """Group records by version and geo metadata for aggregation checks."""
-    by_key: dict[tuple, list[tuple[Network, int]]] = collections.defaultdict(list)
-    for network, metadata, lineno in records:
-        by_key[(_network_version(network), metadata)].append((network, lineno))
+    by_key: dict[tuple, list[tuple[Network, int, str]]] = collections.defaultdict(list)
+    for network, metadata, lineno, raw_line in records:
+        by_key[(_network_version(network), metadata)].append((network, lineno, raw_line))
 
-    groups: list[dict[Network, list[int]]] = []
+    groups: list[dict[Network, list[tuple[int, str]]]] = []
     for nets in by_key.values():
-        net_to_lines: dict[Network, list[int]] = collections.defaultdict(list)
-        for network, lineno in nets:
-            net_to_lines[network].append(lineno)
+        net_to_lines: dict[Network, list[tuple[int, str]]] = collections.defaultdict(list)
+        for network, lineno, raw_line in nets:
+            net_to_lines[network].append((lineno, raw_line))
         if len(net_to_lines) >= 2:
             groups.append(net_to_lines)
     return groups
 
 
 def _group_aggregation_issues(
-    net_to_lines: dict[Network, list[int]],
+    net_to_lines: dict[Network, list[tuple[int, str]]],
 ) -> list[ValidationIssue]:
     """Build aggregation warnings for one metadata-equivalent group."""
     unique = list(net_to_lines.keys())
@@ -103,31 +124,32 @@ def _group_aggregation_issues(
 
 
 def _contributors_for_supernet(
-    net_to_lines: dict[Network, list[int]],
+    net_to_lines: dict[Network, list[tuple[int, str]]],
     unique: list[Network],
     supernet: Network,
-) -> list[tuple[Network, int]]:
+) -> list[tuple[Network, int, str]]:
     """Return prefixes and source lines contained by a candidate supernet."""
-    contributors: list[tuple[Network, int]] = []
+    contributors: list[tuple[Network, int, str]] = []
     for original in unique:
         if not _network_subnet_of(original, supernet):
             continue
-        for line in net_to_lines[original]:
-            contributors.append((original, line))
+        for line, raw_line in net_to_lines[original]:
+            contributors.append((original, line, raw_line))
     return contributors
 
 
 def _aggregation_issue(
-    contributors: list[tuple[Network, int]],
+    contributors: list[tuple[Network, int, str]],
     supernet: Network,
 ) -> ValidationIssue:
     """Build one aggregatable warning from contributors."""
-    parts = ", ".join(f"{net} (line {line})" for net, line in contributors)
+    parts = ", ".join(f"{net} (line {line})" for net, line, _raw_line in contributors)
     return ValidationIssue(
         severity="warning",
         line=contributors[0][1],
         code="aggregatable",
         message=f"{parts} can be aggregated into {supernet}",
+        raw_line=contributors[0][2],
     )
 
 
@@ -221,12 +243,11 @@ def validate_bytes(
         return _report_from_issues(source, 0, issues)
 
     state = _ValidationState()
-    raw_lines_by_number: dict[int, str] = {}
     for lineno, raw_line, data in iter_data_lines_with_raw(text):
-        raw_lines_by_number[lineno] = raw_line
         issue_start = len(issues)
         _validate_data_line(
             lineno,
+            raw_line,
             data,
             issues,
             state,
@@ -239,8 +260,6 @@ def validate_bytes(
         issue_start = len(issues)
         issues.extend(find_aggregations(state.records_for_aggregation))
         _trace_new_issues(issues, issue_start)
-
-    issues = _attach_raw_lines(issues, raw_lines_by_number)
 
     report = _report_from_issues(source, state.record_count, issues)
     logger.debug(
@@ -317,6 +336,7 @@ def _decode_for_validation(
 
 def _validate_data_line(
     lineno: int,
+    raw_line: str,
     data: str,
     issues: list[ValidationIssue],
     state: _ValidationState,
@@ -324,25 +344,28 @@ def _validate_data_line(
     check_aggregation: bool,
 ) -> None:
     """Validate one parsed data line and update shared state."""
-    fields = _parse_fields(lineno, data, issues)
+    fields = _parse_fields(lineno, raw_line, data, issues)
     if fields is None:
         return
 
-    network, geo = _validate_prefix_and_geo(lineno, fields, issues)
+    network, geo = _validate_prefix_and_geo(lineno, raw_line, fields, issues)
     if network is None or geo is None:
         return
 
     state.record_count += 1
     country_norm, region_norm, city, postal = geo
 
-    _apply_sort_check(lineno, network, issues, state, check_sort)
+    _apply_sort_check(lineno, raw_line, network, issues, state, check_sort)
 
     if check_aggregation:
-        state.records_for_aggregation.append((network, (country_norm, region_norm, city, postal), lineno))
+        state.records_for_aggregation.append(
+            (network, (country_norm, region_norm, city, postal), lineno, raw_line)
+        )
 
 
 def _parse_fields(
     lineno: int,
+    raw_line: str,
     data: str,
     issues: list[ValidationIssue],
 ) -> list[str] | None:
@@ -350,30 +373,31 @@ def _parse_fields(
     try:
         fields = parse_record(data)
     except csv.Error as exc:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                line=lineno,
-                code="csv",
-                message=f"CSV parse error: {exc}",
-            )
+        _append_issue(
+            issues,
+            severity="error",
+            line=lineno,
+            code="csv",
+            message=f"CSV parse error: {exc}",
+            raw_line=raw_line,
         )
         return None
 
     if len(fields) > MAX_FIELDS:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                line=lineno,
-                code="too-many-fields",
-                message=(f"Expected at most {MAX_FIELDS} fields, got {len(fields)}"),
-            )
+        _append_issue(
+            issues,
+            severity="error",
+            line=lineno,
+            code="too-many-fields",
+            message=f"Expected at most {MAX_FIELDS} fields, got {len(fields)}",
+            raw_line=raw_line,
         )
     return normalize_fields(fields)
 
 
 def _validate_prefix_and_geo(
     lineno: int,
+    raw_line: str,
     fields: list[str],
     issues: list[ValidationIssue],
 ) -> tuple[
@@ -382,7 +406,7 @@ def _validate_prefix_and_geo(
 ]:
     """Validate prefix and geo fields, returning normalized values."""
     prefix, country, region, city, postal = fields
-    network = _parse_network(prefix, lineno, issues)
+    network = _parse_network(prefix, lineno, raw_line, issues)
     if network is None:
         return None, None
 
@@ -392,26 +416,28 @@ def _validate_prefix_and_geo(
         city,
         postal,
         lineno,
+        raw_line,
         issues,
     )
-    region_norm = _validate_region(region, country_norm, lineno, issues)
+    region_norm = _validate_region(region, country_norm, lineno, raw_line, issues)
     return network, (country_norm, region_norm, city, postal)
 
 
 def _parse_network(
     prefix: str,
     lineno: int,
+    raw_line: str,
     issues: list[ValidationIssue],
 ) -> Network | None:
     """Parse strict CIDR network and append errors on failure."""
     if not prefix:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                line=lineno,
-                code="missing-prefix",
-                message="IP prefix is empty",
-            )
+        _append_issue(
+            issues,
+            severity="error",
+            line=lineno,
+            code="missing-prefix",
+            message="IP prefix is empty",
+            raw_line=raw_line,
         )
         return None
 
@@ -419,13 +445,13 @@ def _parse_network(
         network = ipaddress.ip_network(prefix, strict=True)
         return network
     except ValueError as exc:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                line=lineno,
-                code="invalid-prefix",
-                message=f"Invalid prefix {prefix!r}: {exc}",
-            )
+        _append_issue(
+            issues,
+            severity="error",
+            line=lineno,
+            code="invalid-prefix",
+            message=f"Invalid prefix {prefix!r}: {exc}",
+            raw_line=raw_line,
         )
         return None
 
@@ -436,42 +462,43 @@ def _validate_country(
     city: str,
     postal: str,
     lineno: int,
+    raw_line: str,
     issues: list[ValidationIssue],
 ) -> str:
     """Validate and normalize country code with dependent field rules."""
     if not country:
         if region or city or postal:
-            issues.append(
-                ValidationIssue(
-                    severity="error",
-                    line=lineno,
-                    code="missing-country",
-                    message=("Country code is required when region/city/postal-code is present"),
-                )
+            _append_issue(
+                issues,
+                severity="error",
+                line=lineno,
+                code="missing-country",
+                message="Country code is required when region/city/postal-code is present",
+                raw_line=raw_line,
             )
         return ""
 
     country_norm = country.upper()
     if country != country_norm:
-        issues.append(
-            ValidationIssue(
-                severity="warning",
-                line=lineno,
-                code="country-case",
-                message=(f"Country code {country!r} should be uppercase ({country_norm!r})"),
-            )
+        _append_issue(
+            issues,
+            severity="warning",
+            line=lineno,
+            code="country-case",
+            message=f"Country code {country!r} should be uppercase ({country_norm!r})",
+            raw_line=raw_line,
         )
 
     if _lookup_country(country_norm):
         return country_norm
 
-    issues.append(
-        ValidationIssue(
-            severity="error",
-            line=lineno,
-            code="invalid-country",
-            message=(f"Unknown ISO 3166-1 alpha-2 country code {country!r}"),
-        )
+    _append_issue(
+        issues,
+        severity="error",
+        line=lineno,
+        code="invalid-country",
+        message=f"Unknown ISO 3166-1 alpha-2 country code {country!r}",
+        raw_line=raw_line,
     )
     return ""
 
@@ -480,6 +507,7 @@ def _validate_region(
     region: str,
     country_norm: str,
     lineno: int,
+    raw_line: str,
     issues: list[ValidationIssue],
 ) -> str:
     """Validate and normalize region code and country affinity."""
@@ -488,41 +516,42 @@ def _validate_region(
 
     region_norm = region.upper()
     if region != region_norm:
-        issues.append(
-            ValidationIssue(
-                severity="warning",
-                line=lineno,
-                code="region-case",
-                message=(f"Region code {region!r} should be uppercase ({region_norm!r})"),
-            )
+        _append_issue(
+            issues,
+            severity="warning",
+            line=lineno,
+            code="region-case",
+            message=f"Region code {region!r} should be uppercase ({region_norm!r})",
+            raw_line=raw_line,
         )
 
     subdivision = _lookup_subdivision(region_norm)
     if subdivision is None:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                line=lineno,
-                code="invalid-region",
-                message=(f"Unknown ISO 3166-2 subdivision code {region!r}"),
-            )
+        _append_issue(
+            issues,
+            severity="error",
+            line=lineno,
+            code="invalid-region",
+            message=f"Unknown ISO 3166-2 subdivision code {region!r}",
+            raw_line=raw_line,
         )
         return region_norm
 
     if country_norm and subdivision.country_code != country_norm:
-        issues.append(
-            ValidationIssue(
-                severity="error",
-                line=lineno,
-                code="region-country-mismatch",
-                message=(f"Region {region_norm!r} belongs to {subdivision.country_code!r}, not {country_norm!r}"),
-            )
+        _append_issue(
+            issues,
+            severity="error",
+            line=lineno,
+            code="region-country-mismatch",
+            message=f"Region {region_norm!r} belongs to {subdivision.country_code!r}, not {country_norm!r}",
+            raw_line=raw_line,
         )
     return region_norm
 
 
 def _apply_sort_check(
     lineno: int,
+    raw_line: str,
     network: Network,
     issues: list[ValidationIssue],
     state: _ValidationState,
@@ -534,13 +563,13 @@ def _apply_sort_check(
     version = _network_version(network)
     previous = state.prev_by_version.get(version)
     if previous is not None and _network_lt(network, previous):
-        issues.append(
-            ValidationIssue(
-                severity="warning",
-                line=lineno,
-                code="unsorted",
-                message=(f"Prefix {network} appears after {previous}; RFC 8805 says records SHOULD be sorted"),
-            )
+        _append_issue(
+            issues,
+            severity="warning",
+            line=lineno,
+            code="unsorted",
+            message=f"Prefix {network} appears after {previous}; RFC 8805 says records SHOULD be sorted",
+            raw_line=raw_line,
         )
     state.prev_by_version[version] = network
 
@@ -561,21 +590,6 @@ def _report_from_issues(
         valid=errors == 0,
         issues=tuple(issues),
     )
-
-
-def _attach_raw_lines(
-    issues: list[ValidationIssue],
-    raw_lines_by_number: dict[int, str],
-) -> list[ValidationIssue]:
-    """Attach source raw lines to line-scoped issues when available."""
-    return [
-        dataclasses.replace(issue, raw_line=raw_lines_by_number.get(issue.line))
-        if issue.line is not None and issue.raw_line is None
-        else issue
-        for issue in issues
-    ]
-
-
 def render_validation_text(report: ValidationReport) -> str:
     """Render a human-readable validation report."""
     lines = [f"source: {report.source}", f"records: {report.records}"]

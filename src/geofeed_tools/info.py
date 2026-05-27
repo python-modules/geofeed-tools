@@ -12,6 +12,8 @@ def build_info(
     source: str,
     records: list[GeofeedRecord],
     report: ValidationReport | None = None,
+    *,
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network | None] | None = None,
 ) -> GeoFeedInfo:
     """Build aggregate geofeed statistics from records and validation."""
     logger.debug(
@@ -29,8 +31,10 @@ def build_info(
     cities = set()
     postals = set()
 
-    for record in records:
-        network = ipaddress.ip_network(record.prefix, strict=False)
+    for index, record in enumerate(records):
+        network = None if networks is None else networks[index]
+        if network is None:
+            network = ipaddress.ip_network(record.prefix, strict=False)
         if network.version == 4:
             ipv4 += 1
         else:
