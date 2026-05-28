@@ -7,7 +7,8 @@ from pathlib import Path
 import geofeed_tools.core as core_module
 import geofeed_tools.query as query_module
 from geofeed_tools import GeoFeed, GeoFeedDiscoveryError
-from geofeed_tools.models import DoctorLookup, DoctorResult, QueryResult
+from geofeed_tools.models import DoctorLookup
+from geofeed_tools.rdap import ResolvedRdapLookup
 
 
 def fixture_path(name: str) -> str:
@@ -25,8 +26,8 @@ def test_parse_and_info() -> None:
     info = geofeed.info(output="objects")
     assert not isinstance(info, str)
     assert info.total_records == 3
-    assert info.ipv4_records == 2
-    assert info.ipv6_records == 1
+    assert info.prefixes_v4 == 2
+    assert info.prefixes_v6 == 1
 
 
 def test_validate_invalid_file() -> None:
@@ -143,64 +144,110 @@ def test_query_cache_can_be_disabled(monkeypatch) -> None:
     assert call_count == 2
 
 
-def test_lookup_returns_query_result(monkeypatch) -> None:
-    """GeoFeed.lookup should return a QueryResult with matches from the discovered geofeed."""
-    record_stub = core_module.GeofeedRecord(prefix="203.0.113.0/24", country="US")
+def test_geofeed_accepts_ip_source_and_resolves_via_rdap(monkeypatch) -> None:
+    """GeoFeed(ip) should run an RDAP discovery and load the resolved URL."""
+    geofeed_text = b"192.0.2.0/24,US,US-CA,Los Angeles,90001\n192.0.2.128/25,US,US-CA,Pasadena,91101\n"
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="192.0.2.200",
+            bootstrap_url="https://rdap.org/ip/192.0.2.200",
+            geofeed_url="https://example.com/geofeed.csv",
+            geofeed_discovered_via="rdap link rel=geofeed",
+        ),
+        range_start=None,
+        range_end=None,
+    )
 
-    def fake_doctor_query(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
-            lookup=DoctorLookup(
-                lookup_strategy="ip-address",
-                rdap_method=rdap_method,
-                rdap_query=query,
-                bootstrap_url=f"https://rdap.org/ip/{query}",
-                geofeed_url="https://example.com/geofeed.csv",
-            ),
-            matches=(record_stub,),
-        )
+    resolve_calls: list[tuple[str, str]] = []
+    load_calls: list[str] = []
 
-    monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
+    def fake_resolve(query: str, *, rdap_method: str = "rdap.org"):
+        resolve_calls.append((query, rdap_method))
+        return resolved
 
-    result = GeoFeed.lookup("203.0.113.1")
+    def fake_load(source: str):
+        load_calls.append(source)
+        return geofeed_text, "text/csv"
 
-    assert isinstance(result, QueryResult)
-    assert result.query == "203.0.113.1"
-    assert len(result.matches) == 1
-    assert result.matches[0].prefix == "203.0.113.0/24"
+    monkeypatch.setattr("geofeed_tools.core.resolve_geofeed_lookup", fake_resolve)
+    monkeypatch.setattr("geofeed_tools.core.load_input", fake_load)
+
+    geofeed = GeoFeed("192.0.2.200")
+
+    assert resolve_calls == [("192.0.2.200", "rdap.org")]
+    assert load_calls == ["https://example.com/geofeed.csv"]
+    assert geofeed.original_source == "192.0.2.200"
+    assert geofeed.source == "https://example.com/geofeed.csv"
+    assert geofeed.discovery is not None
+    assert geofeed.discovery.geofeed_url == "https://example.com/geofeed.csv"
+
+    info = geofeed.info(output="objects")
+    assert not isinstance(info, str)
+    assert info.prefixes_total == 2
 
 
-def test_lookup_raises_when_no_geofeed(monkeypatch) -> None:
-    """GeoFeed.lookup should raise GeoFeedDiscoveryError when no geofeed URL is found."""
+def test_geofeed_accepts_prefix_source(monkeypatch) -> None:
+    """GeoFeed should accept a CIDR prefix and resolve it via RDAP."""
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="prefix-network-address",
+            rdap_method="rdap.org",
+            rdap_query="192.0.2.0",
+            bootstrap_url="https://rdap.org/ip/192.0.2.0",
+            geofeed_url="https://example.com/geofeed.csv",
+        ),
+        range_start=None,
+        range_end=None,
+    )
 
-    def fake_doctor_query(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
-            lookup=DoctorLookup(
-                lookup_strategy="ip-address",
-                rdap_method=rdap_method,
-                rdap_query=query,
-                bootstrap_url=f"https://rdap.org/ip/{query}",
-            ),
-            matches=(),
-        )
+    monkeypatch.setattr(
+        "geofeed_tools.core.resolve_geofeed_lookup",
+        lambda query, *, rdap_method="rdap.org": resolved,
+    )
+    monkeypatch.setattr(
+        "geofeed_tools.core.load_input",
+        lambda source: (b"192.0.2.0/24,US,US-CA,LA,\n", "text/csv"),
+    )
 
-    monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
+    geofeed = GeoFeed("192.0.2.0/24")
+    assert geofeed.source == "https://example.com/geofeed.csv"
+    assert geofeed.discovery is not None
+
+
+def test_geofeed_ip_source_raises_when_no_geofeed_found(monkeypatch) -> None:
+    """A failed RDAP discovery should raise GeoFeedDiscoveryError at construction."""
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="198.51.100.1",
+            bootstrap_url="https://rdap.org/ip/198.51.100.1",
+            geofeed_url=None,
+        ),
+        range_start=None,
+        range_end=None,
+    )
+    monkeypatch.setattr(
+        "geofeed_tools.core.resolve_geofeed_lookup",
+        lambda query, *, rdap_method="rdap.org": resolved,
+    )
 
     import pytest
 
     with pytest.raises(GeoFeedDiscoveryError) as exc_info:
-        GeoFeed.lookup("203.0.113.1")
-    assert exc_info.value.query == "203.0.113.1"
+        GeoFeed("198.51.100.1")
+    assert exc_info.value.query == "198.51.100.1"
 
 
-def test_lookup_json_output(monkeypatch) -> None:
-    """GeoFeed.lookup with output='json' should return a JSON string."""
-    record_stub = core_module.GeofeedRecord(prefix="203.0.113.0/24", country="US")
+def test_geofeed_rdap_resolution_passes_rdap_method(monkeypatch) -> None:
+    """The rdap_method constructor arg should be forwarded to the resolver."""
+    captured: list[str] = []
 
-    def fake_doctor_query(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
+    def fake_resolve(query: str, *, rdap_method: str = "rdap.org"):
+        captured.append(rdap_method)
+        return ResolvedRdapLookup(
             lookup=DoctorLookup(
                 lookup_strategy="ip-address",
                 rdap_method=rdap_method,
@@ -208,13 +255,48 @@ def test_lookup_json_output(monkeypatch) -> None:
                 bootstrap_url=f"https://rdap.org/ip/{query}",
                 geofeed_url="https://example.com/geofeed.csv",
             ),
-            matches=(record_stub,),
+            range_start=None,
+            range_end=None,
         )
 
-    monkeypatch.setattr("geofeed_tools.core.doctor_query", fake_doctor_query)
+    monkeypatch.setattr("geofeed_tools.core.resolve_geofeed_lookup", fake_resolve)
+    monkeypatch.setattr(
+        "geofeed_tools.core.load_input",
+        lambda source: (b"", "text/csv"),
+    )
 
-    payload = GeoFeed.lookup("203.0.113.1", output="json")
+    GeoFeed("192.0.2.200", rdap_method="iana-bootstrap")
+    assert captured == ["iana-bootstrap"]
 
-    assert isinstance(payload, str)
-    assert '"query": "203.0.113.1"' in payload
-    assert '"prefix": "203.0.113.0/24"' in payload
+
+def test_geofeed_ip_source_does_not_reresolve_on_reload(monkeypatch) -> None:
+    """Once resolved, reload reuses the discovered URL without another RDAP call."""
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="192.0.2.200",
+            bootstrap_url="https://rdap.org/ip/192.0.2.200",
+            geofeed_url="https://example.com/geofeed.csv",
+        ),
+        range_start=None,
+        range_end=None,
+    )
+
+    resolve_count = 0
+
+    def fake_resolve(query: str, *, rdap_method: str = "rdap.org"):
+        nonlocal resolve_count
+        resolve_count += 1
+        return resolved
+
+    monkeypatch.setattr("geofeed_tools.core.resolve_geofeed_lookup", fake_resolve)
+    monkeypatch.setattr(
+        "geofeed_tools.core.load_input",
+        lambda source: (b"192.0.2.0/24,US,US-CA,LA,\n", "text/csv"),
+    )
+
+    geofeed = GeoFeed("192.0.2.200")
+    geofeed.reload()
+    geofeed.reload()
+    assert resolve_count == 1

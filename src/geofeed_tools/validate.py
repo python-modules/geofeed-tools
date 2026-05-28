@@ -3,24 +3,25 @@
 from __future__ import annotations
 
 import collections
-import csv
 import ipaddress
 from functools import lru_cache
+from typing import cast
 
 import pycountry
 
-from .config import LRU_COUNTRY_CACHE_SIZE, LRU_SUBDIVISION_CACHE_SIZE
-from .loader import is_url
-from .logging import TRACE_LEVEL, logger
-from .models import ValidationIssue, ValidationReport
-from .parsing import (
-    MAX_FIELDS,
-    iter_data_lines_with_raw,
-    normalize_fields,
-    parse_record,
+from ._net_utils import (
+    Network,
+    collapse_same_version,
+    network_lt,
+    network_subnet_of,
+    network_version,
 )
+from .config import LRU_COUNTRY_CACHE_SIZE, LRU_SUBDIVISION_CACHE_SIZE, TRACE_LEVEL
+from .loader import is_url
+from .logging import logger
+from .models import ValidationIssue, ValidationReport
+from .parsing import MAX_FIELDS, ParsedLine, iter_records
 
-Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 AggregationRecord = tuple[Network, tuple[str, str, str, str], int, str]
 
 
@@ -32,20 +33,26 @@ class _ValidationState:
         self.prev_by_version: dict[int, Network] = {}
         self.records_for_aggregation: list[AggregationRecord] = []
 
-
-def _trace_new_issues(issues: list[ValidationIssue], start_index: int) -> None:
-    """Emit trace logs for newly appended validation issues."""
-    if not logger.isEnabledFor(TRACE_LEVEL):
-        return
-    for issue in issues[start_index:]:
-        logger.log(
-            TRACE_LEVEL,
-            "Validation issue detected: severity=%s line=%s code=%s message=%s",
-            issue.severity,
-            issue.line,
-            issue.code,
-            issue.message,
-        )
+    def observe_for_sort(
+        self,
+        network: Network,
+        lineno: int,
+        raw_line: str,
+        issues: list[ValidationIssue],
+    ) -> None:
+        """Append a warning when same-version prefixes appear out of order."""
+        version = network_version(network)
+        previous = self.prev_by_version.get(version)
+        if previous is not None and network_lt(network, previous):
+            _append_issue(
+                issues,
+                severity="warning",
+                line=lineno,
+                code="unsorted",
+                message=f"Prefix {network} appears after {previous}; RFC 8805 says records SHOULD be sorted",
+                raw_line=raw_line,
+            )
+        self.prev_by_version[version] = network
 
 
 def _append_issue(
@@ -57,16 +64,24 @@ def _append_issue(
     message: str,
     raw_line: str | None = None,
 ) -> None:
-    """Append one validation issue."""
-    issues.append(
-        ValidationIssue(
-            severity=severity,
-            line=line,
-            code=code,
-            message=message,
-            raw_line=raw_line,
-        )
+    """Append one validation issue and emit a TRACE log for it."""
+    issue = ValidationIssue(
+        severity=severity,
+        line=line,
+        code=code,
+        message=message,
+        raw_line=raw_line,
     )
+    issues.append(issue)
+    if logger.isEnabledFor(TRACE_LEVEL):
+        logger.log(
+            TRACE_LEVEL,
+            "Validation issue detected: severity=%s line=%s code=%s message=%s",
+            severity,
+            line,
+            code,
+            message,
+        )
 
 
 def find_aggregations(
@@ -92,7 +107,7 @@ def _aggregation_groups(
     """Group records by version and geo metadata for aggregation checks."""
     by_key: dict[tuple, list[tuple[Network, int, str]]] = collections.defaultdict(list)
     for network, metadata, lineno, raw_line in records:
-        by_key[(_network_version(network), metadata)].append((network, lineno, raw_line))
+        by_key[(network_version(network), metadata)].append((network, lineno, raw_line))
 
     groups: list[dict[Network, list[tuple[int, str]]]] = []
     for nets in by_key.values():
@@ -109,18 +124,32 @@ def _group_aggregation_issues(
 ) -> list[ValidationIssue]:
     """Build aggregation warnings for one metadata-equivalent group."""
     unique = list(net_to_lines.keys())
-    collapsed = _collapse_same_version(unique)
+    if not unique:
+        return []
     issues: list[ValidationIssue] = []
-    for supernet in collapsed:
-        contributors = _contributors_for_supernet(
-            net_to_lines,
-            unique,
-            supernet,
-        )
-        if len({net for net, _line, _raw in contributors}) < 2:
-            continue
-        contributors.sort(key=lambda item: (item[1], item[0]))
-        issues.append(_aggregation_issue(contributors, supernet))
+
+    if isinstance(unique[0], ipaddress.IPv4Network):
+        for supernet_v4 in collapse_same_version([cast(ipaddress.IPv4Network, network) for network in unique]):
+            contributors = _contributors_for_supernet(
+                net_to_lines,
+                unique,
+                supernet_v4,
+            )
+            if len({net for net, _line, _raw in contributors}) < 2:
+                continue
+            contributors.sort(key=lambda item: (item[1], item[0]))
+            issues.append(_aggregation_issue(contributors, supernet_v4))
+    else:
+        for supernet_v6 in collapse_same_version([cast(ipaddress.IPv6Network, network) for network in unique]):
+            contributors = _contributors_for_supernet(
+                net_to_lines,
+                unique,
+                supernet_v6,
+            )
+            if len({net for net, _line, _raw in contributors}) < 2:
+                continue
+            contributors.sort(key=lambda item: (item[1], item[0]))
+            issues.append(_aggregation_issue(contributors, supernet_v6))
     return issues
 
 
@@ -132,7 +161,7 @@ def _contributors_for_supernet(
     """Return prefixes and source lines contained by a candidate supernet."""
     contributors: list[tuple[Network, int, str]] = []
     for original in unique:
-        if not _network_subnet_of(original, supernet):
+        if not network_subnet_of(original, supernet):
             continue
         for line, raw_line in net_to_lines[original]:
             contributors.append((original, line, raw_line))
@@ -152,48 +181,6 @@ def _aggregation_issue(
         message=f"{parts} can be aggregated into {supernet}",
         raw_line=contributors[0][2],
     )
-
-
-def _network_version(network: Network) -> int:
-    """Return network IP version as integer."""
-    return 4 if isinstance(network, ipaddress.IPv4Network) else 6
-
-
-def _network_subnet_of(candidate: Network, container: Network) -> bool:
-    """Check subnet relation while preserving type safety across families."""
-    if isinstance(candidate, ipaddress.IPv4Network) and isinstance(
-        container,
-        ipaddress.IPv4Network,
-    ):
-        return candidate.subnet_of(container)
-    if isinstance(candidate, ipaddress.IPv6Network) and isinstance(
-        container,
-        ipaddress.IPv6Network,
-    ):
-        return candidate.subnet_of(container)
-    return False
-
-
-def _network_lt(left: Network, right: Network) -> bool:
-    """Compare two same-family networks for ordering."""
-    if isinstance(left, ipaddress.IPv4Network) and isinstance(
-        right,
-        ipaddress.IPv4Network,
-    ):
-        return left < right
-    if isinstance(left, ipaddress.IPv6Network) and isinstance(
-        right,
-        ipaddress.IPv6Network,
-    ):
-        return left < right
-    return False
-
-
-def _collapse_same_version(unique: list[Network]) -> list[Network]:
-    """Collapse a same-version network list with stable typing."""
-    if not unique:
-        return []
-    return list(ipaddress.collapse_addresses(unique))
 
 
 @lru_cache(maxsize=LRU_COUNTRY_CACHE_SIZE)
@@ -227,40 +214,30 @@ def validate_bytes(
         check_aggregation,
     )
     issues: list[ValidationIssue] = []
-    issue_start = len(issues)
-    _add_content_type_issue(
-        issues,
-        source,
-        content_type,
-        check_content_type,
-    )
-    _trace_new_issues(issues, issue_start)
+    _add_content_type_issue(issues, source, content_type, check_content_type)
 
-    issue_start = len(issues)
     text = _decode_for_validation(raw, issues)
-    _trace_new_issues(issues, issue_start)
     if text is None:
         logger.debug("Validation stopped before record scanning due to decode failure: source=%s", source)
         return _report_from_issues(source, 0, issues)
 
     state = _ValidationState()
-    for lineno, raw_line, data in iter_data_lines_with_raw(text):
-        issue_start = len(issues)
-        _validate_data_line(
-            lineno,
-            raw_line,
-            data,
-            issues,
-            state,
-            check_sort,
-            check_aggregation,
-        )
-        _trace_new_issues(issues, issue_start)
+    for line in iter_records(text, strict=True):
+        _validate_data_line(line, issues, state, check_sort, check_aggregation)
 
     if check_aggregation:
-        issue_start = len(issues)
-        issues.extend(find_aggregations(state.records_for_aggregation))
-        _trace_new_issues(issues, issue_start)
+        aggregation_issues = find_aggregations(state.records_for_aggregation)
+        issues.extend(aggregation_issues)
+        if logger.isEnabledFor(TRACE_LEVEL):
+            for issue in aggregation_issues:
+                logger.log(
+                    TRACE_LEVEL,
+                    "Validation issue detected: severity=%s line=%s code=%s message=%s",
+                    issue.severity,
+                    issue.line,
+                    issue.code,
+                    issue.message,
+                )
 
     report = _report_from_issues(source, state.record_count, issues)
     logger.debug(
@@ -336,123 +313,74 @@ def _decode_for_validation(
 
 
 def _validate_data_line(
-    lineno: int,
-    raw_line: str,
-    data: str,
+    line: ParsedLine,
     issues: list[ValidationIssue],
     state: _ValidationState,
     check_sort: bool,
     check_aggregation: bool,
 ) -> None:
     """Validate one parsed data line and update shared state."""
-    fields = _parse_fields(lineno, raw_line, data, issues)
-    if fields is None:
-        return
-
-    network, geo = _validate_prefix_and_geo(lineno, raw_line, fields, issues)
-    if network is None or geo is None:
-        return
-
-    state.record_count += 1
-    country_norm, region_norm, city, postal = geo
-
-    _apply_sort_check(lineno, raw_line, network, issues, state, check_sort)
-
-    if check_aggregation:
-        state.records_for_aggregation.append((network, (country_norm, region_norm, city, postal), lineno, raw_line))
-
-
-def _parse_fields(
-    lineno: int,
-    raw_line: str,
-    data: str,
-    issues: list[ValidationIssue],
-) -> list[str] | None:
-    """Parse one CSV record into normalized RFC 8805 fields."""
-    try:
-        fields = parse_record(data)
-    except csv.Error as exc:
+    if line.csv_error is not None:
         _append_issue(
             issues,
             severity="error",
-            line=lineno,
+            line=line.lineno,
             code="csv",
-            message=f"CSV parse error: {exc}",
-            raw_line=raw_line,
+            message=f"CSV parse error: {line.csv_error}",
+            raw_line=line.raw_line,
         )
-        return None
+        return
 
-    if len(fields) > MAX_FIELDS:
+    assert line.raw_fields is not None
+    if len(line.raw_fields) > MAX_FIELDS:
         _append_issue(
             issues,
             severity="error",
-            line=lineno,
+            line=line.lineno,
             code="too-many-fields",
-            message=f"Expected at most {MAX_FIELDS} fields, got {len(fields)}",
-            raw_line=raw_line,
+            message=f"Expected at most {MAX_FIELDS} fields, got {len(line.raw_fields)}",
+            raw_line=line.raw_line,
         )
-    return normalize_fields(fields)
 
-
-def _validate_prefix_and_geo(
-    lineno: int,
-    raw_line: str,
-    fields: list[str],
-    issues: list[ValidationIssue],
-) -> tuple[
-    Network | None,
-    tuple[str, str, str, str] | None,
-]:
-    """Validate prefix and geo fields, returning normalized values."""
-    prefix, country, region, city, postal = fields
-    network = _parse_network(prefix, lineno, raw_line, issues)
-    if network is None:
-        return None, None
-
-    country_norm = _validate_country(
-        country,
-        region,
-        city,
-        postal,
-        lineno,
-        raw_line,
-        issues,
-    )
-    region_norm = _validate_region(region, country_norm, lineno, raw_line, issues)
-    return network, (country_norm, region_norm, city, postal)
-
-
-def _parse_network(
-    prefix: str,
-    lineno: int,
-    raw_line: str,
-    issues: list[ValidationIssue],
-) -> Network | None:
-    """Parse strict CIDR network and append errors on failure."""
-    if not prefix:
+    if not line.prefix:
         _append_issue(
             issues,
             severity="error",
-            line=lineno,
+            line=line.lineno,
             code="missing-prefix",
             message="IP prefix is empty",
-            raw_line=raw_line,
+            raw_line=line.raw_line,
         )
-        return None
-
-    try:
-        network = ipaddress.ip_network(prefix, strict=True)
-        return network
-    except ValueError as exc:
+        return
+    if line.network is None:
         _append_issue(
             issues,
             severity="error",
-            line=lineno,
+            line=line.lineno,
             code="invalid-prefix",
-            message=f"Invalid prefix {prefix!r}: {exc}",
-            raw_line=raw_line,
+            message=f"Invalid prefix {line.prefix!r}: {line.network_error}",
+            raw_line=line.raw_line,
         )
-        return None
+        return
+
+    country_norm = _validate_country(
+        line.country,
+        line.region,
+        line.city,
+        line.postal,
+        line.lineno,
+        line.raw_line,
+        issues,
+    )
+    region_norm = _validate_region(line.region, country_norm, line.lineno, line.raw_line, issues)
+
+    state.record_count += 1
+    if check_sort:
+        state.observe_for_sort(line.network, line.lineno, line.raw_line, issues)
+    if check_aggregation:
+        state.records_for_aggregation.append(
+            (line.network, (country_norm, region_norm, line.city, line.postal), line.lineno, line.raw_line)
+        )
 
 
 def _validate_country(
@@ -546,31 +474,6 @@ def _validate_region(
             raw_line=raw_line,
         )
     return region_norm
-
-
-def _apply_sort_check(
-    lineno: int,
-    raw_line: str,
-    network: Network,
-    issues: list[ValidationIssue],
-    state: _ValidationState,
-    check_sort: bool,
-) -> None:
-    """Append warning when same-version prefixes are out of sort order."""
-    if not check_sort:
-        return
-    version = _network_version(network)
-    previous = state.prev_by_version.get(version)
-    if previous is not None and _network_lt(network, previous):
-        _append_issue(
-            issues,
-            severity="warning",
-            line=lineno,
-            code="unsorted",
-            message=f"Prefix {network} appears after {previous}; RFC 8805 says records SHOULD be sorted",
-            raw_line=raw_line,
-        )
-    state.prev_by_version[version] = network
 
 
 def _report_from_issues(

@@ -9,10 +9,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 from .config import (
+    DEFAULT_RDAP_METHOD,
+    FETCH_TIMEOUT,
     IANA_BOOTSTRAP_METHOD,
     IANA_BOOTSTRAP_URLS,
     JSON_ACCEPT,
@@ -22,8 +24,10 @@ from .config import (
     RDAP_ORG_METHOD,
     RDAP_ORG_QUERY_TEMPLATE,
     RDAP_ORG_ROOT_URL,
+    TRACE_LEVEL,
+    USER_AGENT,
 )
-from .loader import ASYNC_HTTP_ERROR, FETCH_TIMEOUT, USER_AGENT, FetchError
+from .loader import ASYNC_HTTP_ERROR, FetchError
 from .logging import logger
 from .models import DoctorLookup
 from .query import Network, parse_query
@@ -47,6 +51,61 @@ class ResolvedRdapLookup:
     lookup: DoctorLookup
     range_start: IPAddress | None
     range_end: IPAddress | None
+
+
+@dataclass(slots=True)
+class _LookupTraversalState:
+    """Mutable RDAP traversal state shared by sync and async lookup flows."""
+
+    lookup_strategy: str
+    rdap_method: str
+    rdap_query: str
+    bootstrap_url: str
+    bootstrap_source_url: str | None
+    resolved_urls: list[str] = field(default_factory=list)
+    seen_urls: set[str] = field(default_factory=set)
+    default_handle: str | None = None
+    default_range: str | None = None
+    default_start: IPAddress | None = None
+    default_end: IPAddress | None = None
+    geofeed_url: str | None = None
+    geofeed_discovered_via: str | None = None
+    geofeed_reference_url: str | None = None
+    referring_handle: str | None = None
+    referring_range: str | None = None
+    range_start: IPAddress | None = None
+    range_end: IPAddress | None = None
+
+    def finalize(self) -> ResolvedRdapLookup:
+        """Build the final resolved RDAP lookup object from traversal state."""
+        referring_handle = self.referring_handle
+        referring_range = self.referring_range
+        range_start = self.range_start
+        range_end = self.range_end
+        if self.geofeed_url is None:
+            referring_handle = self.default_handle
+            referring_range = self.default_range
+            range_start = self.default_start
+            range_end = self.default_end
+
+        lookup = DoctorLookup(
+            lookup_strategy=self.lookup_strategy,
+            rdap_method=self.rdap_method,
+            rdap_query=self.rdap_query,
+            bootstrap_url=self.bootstrap_url,
+            bootstrap_source_url=self.bootstrap_source_url,
+            resolved_urls=tuple(self.resolved_urls),
+            referring_handle=referring_handle,
+            referring_range=referring_range,
+            geofeed_url=self.geofeed_url,
+            geofeed_discovered_via=self.geofeed_discovered_via,
+            geofeed_reference_url=self.geofeed_reference_url,
+        )
+        return ResolvedRdapLookup(
+            lookup=lookup,
+            range_start=range_start,
+            range_end=range_end,
+        )
 
 
 def _string(value: object) -> str | None:
@@ -85,12 +144,19 @@ def normalize_rdap_target(query: str) -> tuple[Network, str, str]:
     """Normalize doctor input and choose the RDAP lookup address."""
     query_network = parse_query(query)
     if "/" in query:
-        return (
-            query_network,
-            "prefix-network-address",
-            str(query_network.network_address),
-        )
-    return query_network, "ip-address", str(ipaddress.ip_address(query))
+        strategy = "prefix-network-address"
+        rdap_query = str(query_network.network_address)
+    else:
+        strategy = "ip-address"
+        rdap_query = str(ipaddress.ip_address(query))
+    logger.debug(
+        "Normalized RDAP target: query=%s strategy=%s rdap_query=%s network=%s",
+        query,
+        strategy,
+        rdap_query,
+        query_network,
+    )
+    return query_network, strategy, rdap_query
 
 
 def _build_rdap_org_query_url(address: str) -> str:
@@ -116,6 +182,7 @@ def _fetch_json_urllib(
         "User-Agent": USER_AGENT,
         "Accept": accept,
     }
+    logger.debug("Fetching RDAP/JSON resource via urllib: url=%s accept=%s", url, accept)
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(
@@ -126,8 +193,19 @@ def _fetch_json_urllib(
             resolved_url = response.geturl()
             status_code = response.status
     except urllib.error.HTTPError as exc:
+        logger.warning(
+            "RDAP/JSON fetch failed via urllib: url=%s status=%s reason=%s",
+            url,
+            exc.code,
+            exc.reason,
+        )
         raise FetchError(url, status_code=exc.code, reason=exc.reason) from exc
     except urllib.error.URLError as exc:
+        logger.warning(
+            "RDAP/JSON fetch failed via urllib: url=%s reason=%s",
+            url,
+            exc.reason,
+        )
         raise FetchError(
             url,
             status_code=None,
@@ -149,6 +227,13 @@ def _fetch_json_urllib(
             status_code=status_code,
             reason="Invalid JSON response: expected an object",
         )
+    logger.debug(
+        "Fetched RDAP/JSON resource via urllib: url=%s status=%s resolved_url=%s bytes=%d",
+        url,
+        status_code,
+        resolved_url,
+        len(payload),
+    )
     return data, resolved_url
 
 
@@ -285,22 +370,29 @@ def clear_bootstrap_cache() -> None:
     _bootstrap_index_cache.clear()
 
 
+def _bootstrap_query_url_from_index(
+    address: str,
+    index: BootstrapIndex,
+) -> tuple[str, str]:
+    """Resolve a registry query URL from a parsed IANA bootstrap index."""
+    ip_address = ipaddress.ip_address(address)
+    source_url = IANA_BOOTSTRAP_URLS[ip_address.version]
+    for network, base_urls in index:
+        if ip_address in network:
+            base_url = _select_registry_base_url(base_urls)
+            return _build_registry_query_url(base_url, address), source_url
+    raise FetchError(
+        source_url,
+        status_code=None,
+        reason=f"No IANA RDAP service matched {address}",
+    )
+
+
 def _bootstrap_query_url_from_iana(address: str) -> tuple[str, str]:
     """Resolve a registry query URL from IANA bootstrap data."""
     ip_address = ipaddress.ip_address(address)
     index = _get_bootstrap_index_urllib(ip_address.version)
-    for network, base_urls in index:
-        if ip_address in network:
-            base_url = _select_registry_base_url(base_urls)
-            return (
-                _build_registry_query_url(base_url, address),
-                IANA_BOOTSTRAP_URLS[ip_address.version],
-            )
-    raise FetchError(
-        IANA_BOOTSTRAP_URLS[ip_address.version],
-        status_code=None,
-        reason=f"No IANA RDAP service matched {address}",
-    )
+    return _bootstrap_query_url_from_index(address, index)
 
 
 async def _bootstrap_query_url_from_iana_async(
@@ -309,18 +401,7 @@ async def _bootstrap_query_url_from_iana_async(
     """Resolve a registry query URL from IANA bootstrap data asynchronously."""
     ip_address = ipaddress.ip_address(address)
     index = await _get_bootstrap_index_httpx(ip_address.version)
-    for network, base_urls in index:
-        if ip_address in network:
-            base_url = _select_registry_base_url(base_urls)
-            return (
-                _build_registry_query_url(base_url, address),
-                IANA_BOOTSTRAP_URLS[ip_address.version],
-            )
-    raise FetchError(
-        IANA_BOOTSTRAP_URLS[ip_address.version],
-        status_code=None,
-        reason=f"No IANA RDAP service matched {address}",
-    )
+    return _bootstrap_query_url_from_index(address, index)
 
 
 def initial_rdap_query_url(
@@ -331,8 +412,21 @@ def initial_rdap_query_url(
     """Resolve the initial RDAP query URL for a configured lookup method."""
     validate_rdap_method(rdap_method)
     if rdap_method == RDAP_ORG_METHOD:
-        return _build_rdap_org_query_url(address), RDAP_ORG_ROOT_URL
-    return _bootstrap_query_url_from_iana(address)
+        url = _build_rdap_org_query_url(address)
+        logger.debug(
+            "Resolved initial RDAP URL via rdap.org proxy: address=%s url=%s",
+            address,
+            url,
+        )
+        return url, RDAP_ORG_ROOT_URL
+    url, source_url = _bootstrap_query_url_from_iana(address)
+    logger.debug(
+        "Resolved initial RDAP URL via IANA bootstrap: address=%s url=%s bootstrap_source=%s",
+        address,
+        url,
+        source_url,
+    )
+    return url, source_url
 
 
 async def initial_rdap_query_url_async(
@@ -343,8 +437,21 @@ async def initial_rdap_query_url_async(
     """Resolve the initial async RDAP query URL for a method."""
     validate_rdap_method(rdap_method)
     if rdap_method == RDAP_ORG_METHOD:
-        return _build_rdap_org_query_url(address), RDAP_ORG_ROOT_URL
-    return await _bootstrap_query_url_from_iana_async(address)
+        url = _build_rdap_org_query_url(address)
+        logger.debug(
+            "Resolved initial async RDAP URL via rdap.org proxy: address=%s url=%s",
+            address,
+            url,
+        )
+        return url, RDAP_ORG_ROOT_URL
+    url, source_url = await _bootstrap_query_url_from_iana_async(address)
+    logger.debug(
+        "Resolved initial async RDAP URL via IANA bootstrap: address=%s url=%s bootstrap_source=%s",
+        address,
+        url,
+        source_url,
+    )
+    return url, source_url
 
 
 def _clean_url(url: str) -> str:
@@ -403,22 +510,30 @@ def _extract_geofeed_reference(
     geofeed_url: str | None = None
     geofeed_source: str | None = None
 
-    if candidates:
-        unique_urls: dict[str, list[str]] = {}
-        for url, source in candidates:
-            unique_urls.setdefault(url, []).append(source)
+    if not candidates:
+        logger.log(TRACE_LEVEL, "No geofeed reference found in RDAP object")
+        return geofeed_url, geofeed_source
 
-        if len(unique_urls) == 1:
-            geofeed_url, sources = next(iter(unique_urls.items()))
-            if LINK_GEOFEED_SOURCE in sources:
-                geofeed_source = LINK_GEOFEED_SOURCE
-            else:
-                geofeed_source = sources[0]
+    unique_urls: dict[str, list[str]] = {}
+    for url, source in candidates:
+        unique_urls.setdefault(url, []).append(source)
+
+    if len(unique_urls) == 1:
+        geofeed_url, sources = next(iter(unique_urls.items()))
+        if LINK_GEOFEED_SOURCE in sources:
+            geofeed_source = LINK_GEOFEED_SOURCE
         else:
-            logger.warning(
-                "Ignoring RDAP object with multiple geofeed references: candidates=%s",
-                sorted(unique_urls),
-            )
+            geofeed_source = sources[0]
+        logger.debug(
+            "Extracted geofeed reference from RDAP object: url=%s discovered_via=%s",
+            geofeed_url,
+            geofeed_source,
+        )
+    else:
+        logger.warning(
+            "Ignoring RDAP object with multiple geofeed references: candidates=%s",
+            sorted(unique_urls),
+        )
 
     return geofeed_url, geofeed_source
 
@@ -473,186 +588,195 @@ def _extract_range(
     return start, end, range_text
 
 
+def _record_resolved_url(state: _LookupTraversalState, resolved_url: str) -> None:
+    """Track a resolved RDAP object URL once for traversal and output."""
+    state.seen_urls.add(resolved_url)
+    if resolved_url not in state.resolved_urls:
+        state.resolved_urls.append(resolved_url)
+
+
+def _apply_rdap_payload(
+    state: _LookupTraversalState,
+    payload: Mapping[str, object],
+    resolved_url: str,
+) -> str | None:
+    """Update traversal state from one RDAP object and return the next parent URL."""
+    _record_resolved_url(state, resolved_url)
+
+    handle = _string(payload.get("handle"))
+    start, end, range_text = _extract_range(payload)
+    logger.debug(
+        "Processing RDAP object: url=%s handle=%s range=%s depth=%d",
+        resolved_url,
+        handle,
+        range_text,
+        len(state.resolved_urls),
+    )
+    if len(state.resolved_urls) == 1:
+        state.default_handle = handle
+        state.default_range = range_text
+        state.default_start = start
+        state.default_end = end
+
+    current_geofeed_url, current_geofeed_via = _extract_geofeed_reference(payload)
+    if current_geofeed_url is not None:
+        state.geofeed_url = current_geofeed_url
+        state.geofeed_discovered_via = current_geofeed_via
+        state.geofeed_reference_url = resolved_url
+        state.referring_handle = handle
+        state.referring_range = range_text
+        state.range_start = start
+        state.range_end = end
+        logger.info(
+            "Found geofeed URL in RDAP object: geofeed_url=%s discovered_via=%s referring_handle=%s referring_range=%s",
+            current_geofeed_url,
+            current_geofeed_via,
+            handle,
+            range_text,
+        )
+        return None
+
+    parent_url = _extract_parent_url(payload, resolved_url)
+    if parent_url is not None:
+        logger.debug(
+            "No geofeed reference at %s; following rdap-up parent: %s",
+            resolved_url,
+            parent_url,
+        )
+    else:
+        logger.debug(
+            "No geofeed reference at %s and no rdap-up parent; ending traversal",
+            resolved_url,
+        )
+    return parent_url
+
+
 def resolve_geofeed_lookup(
     query: str,
     *,
-    rdap_method: str = RDAP_ORG_METHOD,
+    rdap_method: str = DEFAULT_RDAP_METHOD,
 ) -> ResolvedRdapLookup:
     """Resolve geofeed discovery metadata for a query using RDAP."""
+    logger.info(
+        "Resolving geofeed lookup via RDAP: query=%s method=%s",
+        query,
+        rdap_method,
+    )
     _query_network, lookup_strategy, rdap_query = normalize_rdap_target(query)
     bootstrap_url, bootstrap_source_url = initial_rdap_query_url(
         rdap_query,
         rdap_method=rdap_method,
     )
-    resolved_urls: list[str] = []
-    seen_urls: set[str] = set()
+    state = _LookupTraversalState(
+        lookup_strategy=lookup_strategy,
+        rdap_method=rdap_method,
+        rdap_query=rdap_query,
+        bootstrap_url=bootstrap_url,
+        bootstrap_source_url=bootstrap_source_url,
+    )
     current_url: str | None = bootstrap_url
 
-    default_handle: str | None = None
-    default_range: str | None = None
-    default_start: IPAddress | None = None
-    default_end: IPAddress | None = None
-
-    geofeed_url: str | None = None
-    geofeed_discovered_via: str | None = None
-    geofeed_reference_url: str | None = None
-    referring_handle: str | None = None
-    referring_range: str | None = None
-    range_start: IPAddress | None = None
-    range_end: IPAddress | None = None
-
-    while current_url is not None and len(resolved_urls) < MAX_RDAP_DEPTH:
-        if current_url in seen_urls:
+    while current_url is not None and len(state.resolved_urls) < MAX_RDAP_DEPTH:
+        if current_url in state.seen_urls:
+            logger.debug(
+                "Stopping RDAP traversal: URL %s already visited (cycle guard)",
+                current_url,
+            )
             break
-        seen_urls.add(current_url)
+        state.seen_urls.add(current_url)
 
         payload, resolved_url = _fetch_json_urllib(
             current_url,
             accept=RDAP_ACCEPT,
         )
-        if resolved_url not in seen_urls:
-            seen_urls.add(resolved_url)
-        if resolved_url not in resolved_urls:
-            resolved_urls.append(resolved_url)
-
-        handle = _string(payload.get("handle"))
-        start, end, range_text = _extract_range(payload)
-        if len(resolved_urls) == 1:
-            default_handle = handle
-            default_range = range_text
-            default_start = start
-            default_end = end
-
-        current_geofeed_url, current_geofeed_via = _extract_geofeed_reference(
-            payload,
-        )
-        if current_geofeed_url is not None:
-            geofeed_url = current_geofeed_url
-            geofeed_discovered_via = current_geofeed_via
-            geofeed_reference_url = resolved_url
-            referring_handle = handle
-            referring_range = range_text
-            range_start = start
-            range_end = end
+        current_url = _apply_rdap_payload(state, payload, resolved_url)
+        if state.geofeed_url is not None:
             break
+    else:
+        if current_url is not None:
+            logger.debug(
+                "Stopping RDAP traversal: hit MAX_RDAP_DEPTH=%d before finding a geofeed reference",
+                MAX_RDAP_DEPTH,
+            )
 
-        current_url = _extract_parent_url(payload, resolved_url)
+    if state.geofeed_url is None:
+        logger.info(
+            "RDAP traversal complete: no geofeed URL found for query=%s after visiting %d object(s)",
+            query,
+            len(state.resolved_urls),
+        )
+    else:
+        logger.debug(
+            "RDAP traversal complete: geofeed=%s visited=%d",
+            state.geofeed_url,
+            len(state.resolved_urls),
+        )
 
-    if geofeed_url is None:
-        referring_handle = default_handle
-        referring_range = default_range
-        range_start = default_start
-        range_end = default_end
-
-    lookup = DoctorLookup(
-        lookup_strategy=lookup_strategy,
-        rdap_method=rdap_method,
-        rdap_query=rdap_query,
-        bootstrap_url=bootstrap_url,
-        bootstrap_source_url=bootstrap_source_url,
-        resolved_urls=tuple(resolved_urls),
-        referring_handle=referring_handle,
-        referring_range=referring_range,
-        geofeed_url=geofeed_url,
-        geofeed_discovered_via=geofeed_discovered_via,
-        geofeed_reference_url=geofeed_reference_url,
-    )
-    return ResolvedRdapLookup(
-        lookup=lookup,
-        range_start=range_start,
-        range_end=range_end,
-    )
+    return state.finalize()
 
 
 async def resolve_geofeed_lookup_async(
     query: str,
     *,
-    rdap_method: str = RDAP_ORG_METHOD,
+    rdap_method: str = DEFAULT_RDAP_METHOD,
 ) -> ResolvedRdapLookup:
     """Resolve geofeed discovery metadata for a query asynchronously."""
+    logger.info(
+        "Resolving geofeed lookup via RDAP asynchronously: query=%s method=%s",
+        query,
+        rdap_method,
+    )
     _query_network, lookup_strategy, rdap_query = normalize_rdap_target(query)
     bootstrap_url, bootstrap_source_url = await initial_rdap_query_url_async(
         rdap_query,
         rdap_method=rdap_method,
     )
-    resolved_urls: list[str] = []
-    seen_urls: set[str] = set()
-    current_url: str | None = bootstrap_url
-
-    default_handle: str | None = None
-    default_range: str | None = None
-    default_start: IPAddress | None = None
-    default_end: IPAddress | None = None
-
-    geofeed_url: str | None = None
-    geofeed_discovered_via: str | None = None
-    geofeed_reference_url: str | None = None
-    referring_handle: str | None = None
-    referring_range: str | None = None
-    range_start: IPAddress | None = None
-    range_end: IPAddress | None = None
-
-    while current_url is not None and len(resolved_urls) < MAX_RDAP_DEPTH:
-        if current_url in seen_urls:
-            break
-        seen_urls.add(current_url)
-
-        payload, resolved_url = await _fetch_json_httpx(
-            current_url,
-            accept=RDAP_ACCEPT,
-        )
-        if resolved_url not in seen_urls:
-            seen_urls.add(resolved_url)
-        if resolved_url not in resolved_urls:
-            resolved_urls.append(resolved_url)
-
-        handle = _string(payload.get("handle"))
-        start, end, range_text = _extract_range(payload)
-        if len(resolved_urls) == 1:
-            default_handle = handle
-            default_range = range_text
-            default_start = start
-            default_end = end
-
-        current_geofeed_url, current_geofeed_via = _extract_geofeed_reference(
-            payload,
-        )
-        if current_geofeed_url is not None:
-            geofeed_url = current_geofeed_url
-            geofeed_discovered_via = current_geofeed_via
-            geofeed_reference_url = resolved_url
-            referring_handle = handle
-            referring_range = range_text
-            range_start = start
-            range_end = end
-            break
-
-        current_url = _extract_parent_url(payload, resolved_url)
-
-    if geofeed_url is None:
-        referring_handle = default_handle
-        referring_range = default_range
-        range_start = default_start
-        range_end = default_end
-
-    lookup = DoctorLookup(
+    state = _LookupTraversalState(
         lookup_strategy=lookup_strategy,
         rdap_method=rdap_method,
         rdap_query=rdap_query,
         bootstrap_url=bootstrap_url,
         bootstrap_source_url=bootstrap_source_url,
-        resolved_urls=tuple(resolved_urls),
-        referring_handle=referring_handle,
-        referring_range=referring_range,
-        geofeed_url=geofeed_url,
-        geofeed_discovered_via=geofeed_discovered_via,
-        geofeed_reference_url=geofeed_reference_url,
     )
-    return ResolvedRdapLookup(
-        lookup=lookup,
-        range_start=range_start,
-        range_end=range_end,
-    )
+    current_url: str | None = bootstrap_url
+
+    while current_url is not None and len(state.resolved_urls) < MAX_RDAP_DEPTH:
+        if current_url in state.seen_urls:
+            logger.debug(
+                "Stopping async RDAP traversal: URL %s already visited (cycle guard)",
+                current_url,
+            )
+            break
+        state.seen_urls.add(current_url)
+
+        payload, resolved_url = await _fetch_json_httpx(
+            current_url,
+            accept=RDAP_ACCEPT,
+        )
+        current_url = _apply_rdap_payload(state, payload, resolved_url)
+        if state.geofeed_url is not None:
+            break
+    else:
+        if current_url is not None:
+            logger.debug(
+                "Stopping async RDAP traversal: hit MAX_RDAP_DEPTH=%d before finding a geofeed reference",
+                MAX_RDAP_DEPTH,
+            )
+
+    if state.geofeed_url is None:
+        logger.info(
+            "Async RDAP traversal complete: no geofeed URL found for query=%s after visiting %d object(s)",
+            query,
+            len(state.resolved_urls),
+        )
+    else:
+        logger.debug(
+            "Async RDAP traversal complete: geofeed=%s visited=%d",
+            state.geofeed_url,
+            len(state.resolved_urls),
+        )
+
+    return state.finalize()
 
 
 __all__ = [

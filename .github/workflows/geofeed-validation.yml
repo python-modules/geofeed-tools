@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       geofeed_path:
-        description: Path or URL passed to geofeed-tools hook.
+        description: Path or URL passed to ``geofeed-tools validate --hook``.
         required: true
         type: string
       python_version:
@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ inputs.strict }}" == "true" ]]; then
-            geofeed-tools hook "${{ inputs.geofeed_path }}" --strict
+            geofeed-tools validate "${{ inputs.geofeed_path }}" --hook --strict
           else
-            geofeed-tools hook "${{ inputs.geofeed_path }}"
+            geofeed-tools validate "${{ inputs.geofeed_path }}" --hook
           fi

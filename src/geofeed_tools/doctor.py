@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 
+from .config import DEFAULT_RDAP_METHOD
 from .io_utils import records_to_csv
 from .loader import decode_text, load_input, load_input_async
 from .logging import logger
 from .models import DoctorResult
 from .query import QueryIndex, filter_query_index, load_query_records, query_text
 from .rdap import (
-    RDAP_ORG_METHOD,
+    ResolvedRdapLookup,
     resolve_geofeed_lookup,
     resolve_geofeed_lookup_async,
 )
@@ -28,12 +29,41 @@ def _filter_records_to_referring_range(
     return filter_query_index(records, start=start, end=end)
 
 
+def _build_doctor_result_from_text(
+    query: str,
+    resolved: ResolvedRdapLookup,
+    text: str,
+    *,
+    return_all: bool,
+    include_longer: bool,
+) -> DoctorResult:
+    """Build a doctor result from decoded geofeed text and resolved RDAP metadata."""
+    indexed_records = load_query_records(text)
+    indexed_records = _filter_records_to_referring_range(
+        indexed_records,
+        resolved.range_start,
+        resolved.range_end,
+    )
+    query_result = query_text(
+        text,
+        query,
+        return_all=return_all,
+        include_longer=include_longer,
+        indexed_records=indexed_records,
+    )
+    return DoctorResult(
+        query=query,
+        lookup=resolved.lookup,
+        matches=query_result.matches,
+    )
+
+
 def doctor_query(
     query: str,
     *,
     return_all: bool = False,
     include_longer: bool = False,
-    rdap_method: str = RDAP_ORG_METHOD,
+    rdap_method: str = DEFAULT_RDAP_METHOD,
 ) -> DoctorResult:
     """Discover and query a published geofeed for an IP or prefix."""
     logger.info("Running geofeed doctor lookup: query=%s", query)
@@ -48,30 +78,20 @@ def doctor_query(
 
     raw, _content_type = load_input(resolved.lookup.geofeed_url)
     text = decode_text(raw, strip_bom=True)
-    indexed_records = load_query_records(text)
-    indexed_records = _filter_records_to_referring_range(
-        indexed_records,
-        resolved.range_start,
-        resolved.range_end,
-    )
-    query_result = query_text(
-        text,
+    result = _build_doctor_result_from_text(
         query,
+        resolved,
+        text,
         return_all=return_all,
         include_longer=include_longer,
-        indexed_records=indexed_records,
     )
     logger.info(
         "Doctor lookup completed: query=%s geofeed_url=%s matches=%d",
         query,
         resolved.lookup.geofeed_url,
-        len(query_result.matches),
+        len(result.matches),
     )
-    return DoctorResult(
-        query=query,
-        lookup=resolved.lookup,
-        matches=query_result.matches,
-    )
+    return result
 
 
 async def doctor_query_async(
@@ -79,10 +99,10 @@ async def doctor_query_async(
     *,
     return_all: bool = False,
     include_longer: bool = False,
-    rdap_method: str = RDAP_ORG_METHOD,
+    rdap_method: str = DEFAULT_RDAP_METHOD,
 ) -> DoctorResult:
     """Discover and query a published geofeed asynchronously."""
-    logger.info("Running async geofeed doctor lookup: query=%s", query)
+    logger.info("Running geofeed doctor lookup: query=%s", query)
     resolved = await resolve_geofeed_lookup_async(
         query,
         rdap_method=rdap_method,
@@ -90,38 +110,28 @@ async def doctor_query_async(
 
     if resolved.lookup.geofeed_url is None:
         logger.info(
-            "Async doctor lookup found no geofeed reference: query=%s",
+            "Doctor lookup found no geofeed reference: query=%s",
             query,
         )
         return DoctorResult(query=query, lookup=resolved.lookup, matches=())
 
     raw, _content_type = await load_input_async(resolved.lookup.geofeed_url)
     text = decode_text(raw, strip_bom=True)
-    indexed_records = await asyncio.to_thread(load_query_records, text)
-    indexed_records = _filter_records_to_referring_range(
-        indexed_records,
-        resolved.range_start,
-        resolved.range_end,
-    )
-    query_result = await asyncio.to_thread(
-        query_text,
-        text,
+    result = await asyncio.to_thread(
+        _build_doctor_result_from_text,
         query,
+        resolved,
+        text,
         return_all=return_all,
         include_longer=include_longer,
-        indexed_records=indexed_records,
     )
     logger.info(
-        "Async doctor lookup completed: query=%s geofeed_url=%s matches=%d",
+        "Doctor lookup completed: query=%s geofeed_url=%s matches=%d",
         query,
         resolved.lookup.geofeed_url,
-        len(query_result.matches),
+        len(result.matches),
     )
-    return DoctorResult(
-        query=query,
-        lookup=resolved.lookup,
-        matches=query_result.matches,
-    )
+    return result
 
 
 def render_doctor_text(result: DoctorResult) -> str:

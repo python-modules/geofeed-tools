@@ -5,19 +5,10 @@ from __future__ import annotations
 import asyncio
 
 from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
-from .core import (
-    _build_lookup_result,
-    _GeoFeedBase,
-    _info_loaded,
-    _normalize_loaded,
-    _parse_loaded,
-    _query_loaded,
-    _serialize_doctor_result,
-    _serialize_query_result,
-    _validate_loaded,
-)
+from .core import _GeoFeedBase, _serialize_doctor_result
 from .doctor import doctor_query_async
-from .loader import FetchError, load_input_async, source_kind
+from .info import DEFAULT_TOP_N
+from .loader import FetchError, is_ip_or_prefix, load_input_async, source_kind
 from .logging import logger
 from .models import (
     DoctorResult,
@@ -27,26 +18,76 @@ from .models import (
     QueryResult,
     ValidationReport,
 )
-from .query import load_query_records
+from .rdap import resolve_geofeed_lookup_async
 
 
 class AsyncGeoFeed(_GeoFeedBase):
     """Async-native geofeed API for library consumers."""
 
-    def __init__(self, source: str, *, cache_query_index: bool = True):
-        """Initialize an async geofeed wrapper around a local path or URL."""
-        super().__init__(source, cache_query_index=cache_query_index)
+    def __init__(
+        self,
+        source: str,
+        *,
+        cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+    ):
+        """Initialize an async geofeed wrapper around a path, URL, or IP/prefix.
+
+        IP/prefix inputs trigger an RDAP discovery on first load (using
+        ``rdap_method``, default rdap.org).
+        """
+        super().__init__(
+            source,
+            cache_query_index=cache_query_index,
+            rdap_method=rdap_method,
+        )
 
     @classmethod
-    async def from_source(cls, source: str, *, cache_query_index: bool = True) -> AsyncGeoFeed:
+    async def from_source(
+        cls,
+        source: str,
+        *,
+        cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+    ) -> AsyncGeoFeed:
         """Create an instance and eagerly load the source asynchronously."""
         logger.debug("Creating AsyncGeoFeed and eagerly loading source: %s", source)
-        geofeed = cls(source, cache_query_index=cache_query_index)
+        geofeed = cls(source, cache_query_index=cache_query_index, rdap_method=rdap_method)
         await geofeed.reload()
         return geofeed
 
+    async def _maybe_resolve_source_async(self) -> None:
+        """Discover the geofeed URL asynchronously when source is an IP/prefix."""
+        if self.discovery is not None:
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping async RDAP discovery: source %s was already resolved to %s",
+                self.original_source,
+                self.source,
+            )
+            return
+        if not is_ip_or_prefix(self.source):
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping async RDAP discovery: source %s is a %s, not an IP/prefix",
+                self.source,
+                source_kind(self.source),
+            )
+            return
+        logger.info(
+            "Source %s is an IP/prefix; running async RDAP geofeed discovery (method=%s)",
+            self.source,
+            self._rdap_method,
+        )
+        resolved = await resolve_geofeed_lookup_async(
+            self.source,
+            rdap_method=self._rdap_method,
+        )
+        self._apply_resolved_lookup(resolved.lookup)
+
     async def reload(self) -> None:
         """Reload the source bytes and decoded text asynchronously."""
+        await self._maybe_resolve_source_async()
         logger.info(
             "Loading geofeed source asynchronously from %s: %s",
             source_kind(self.source),
@@ -63,15 +104,12 @@ class AsyncGeoFeed(_GeoFeedBase):
             content_type,
         )
 
-    async def _ensure_loaded(self) -> tuple[bytes, str]:
+    async def _ensure_loaded(self) -> None:
         if self.raw is None or self.text is None:
             logger.debug("Async geofeed source not loaded yet; performing lazy load: %s", self.source)
             await self.reload()
         else:
             logger.log(TRACE_LEVEL, "Using cached async geofeed source: %s", self.source)
-        assert self.raw is not None
-        assert self.text is not None
-        return self.raw, self.text
 
     async def parse(
         self,
@@ -81,16 +119,9 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         """Parse the source asynchronously and optionally serialize the result."""
-        raw, text = await self._ensure_loaded()
+        await self._ensure_loaded()
         return await asyncio.to_thread(
-            _parse_loaded,
-            self.source,
-            raw,
-            text,
-            self.content_type,
-            include_validation=include_validation,
-            normalize=normalize,
-            output=output,
+            self._do_parse, include_validation=include_validation, normalize=normalize, output=output
         )
 
     async def validate(
@@ -102,12 +133,9 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> ValidationReport | str:
         """Validate the source asynchronously and optionally serialize the report."""
-        raw, _text = await self._ensure_loaded()
+        await self._ensure_loaded()
         return await asyncio.to_thread(
-            _validate_loaded,
-            self.source,
-            raw,
-            self.content_type,
+            self._do_validate,
             check_sort=check_sort,
             check_content_type=check_content_type,
             check_aggregation=check_aggregation,
@@ -125,11 +153,9 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         """Normalize records asynchronously and optionally serialize them."""
-        _raw, text = await self._ensure_loaded()
+        await self._ensure_loaded()
         return await asyncio.to_thread(
-            _normalize_loaded,
-            self.source,
-            text,
+            self._do_normalize,
             uppercase=uppercase,
             sort=sort,
             aggregate=aggregate,
@@ -147,19 +173,37 @@ class AsyncGeoFeed(_GeoFeedBase):
         output: str = "objects",
     ) -> QueryResult | str:
         """Query the source asynchronously for an IP or prefix."""
-        _raw, text = await self._ensure_loaded()
-        indexed_records = self._get_cached_query_index()
-        if indexed_records is None and self._cache_query_index:
-            indexed_records = self._store_query_index(await asyncio.to_thread(load_query_records, text))
+        await self._ensure_loaded()
         return await asyncio.to_thread(
-            _query_loaded,
-            self.source,
-            text,
-            query,
-            return_all=return_all,
+            self._do_query, query, return_all=return_all, include_longer=include_longer, output=output
+        )
+
+    async def filter(
+        self,
+        *,
+        prefix: str | None = None,
+        country: str | None = None,
+        region: str | None = None,
+        city: str | None = None,
+        postal_code: str | None = None,
+        family: str | int | None = None,
+        prefix_length: int | None = None,
+        include_longer: bool = False,
+        output: str = "objects",
+    ) -> list[GeofeedRecord] | str:
+        """Filter records by one or more field/property predicates asynchronously."""
+        await self._ensure_loaded()
+        return await asyncio.to_thread(
+            self._do_filter,
+            prefix=prefix,
+            country=country,
+            region=region,
+            city=city,
+            postal_code=postal_code,
+            family=family,
+            prefix_length=prefix_length,
             include_longer=include_longer,
             output=output,
-            indexed_records=indexed_records,
         )
 
     @staticmethod
@@ -180,39 +224,15 @@ class AsyncGeoFeed(_GeoFeedBase):
         )
         return _serialize_doctor_result(result, output=output)
 
-    @staticmethod
-    async def lookup(
-        query: str,
+    async def info(
+        self,
         *,
-        return_all: bool = False,
-        include_longer: bool = False,
-        rdap_method: str = DEFAULT_RDAP_METHOD,
+        top_n: int = DEFAULT_TOP_N,
         output: str = "objects",
-    ) -> QueryResult | str:
-        """Discover a geofeed via RDAP and return query results for an IP or prefix.
-
-        Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
-        """
-        result = await doctor_query_async(
-            query,
-            return_all=return_all,
-            include_longer=include_longer,
-            rdap_method=rdap_method,
-        )
-        query_result = _build_lookup_result(result)
-        return _serialize_query_result(query_result, output=output)
-
-    async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
-        """Compute aggregate geofeed statistics asynchronously."""
-        raw, text = await self._ensure_loaded()
-        return await asyncio.to_thread(
-            _info_loaded,
-            self.source,
-            raw,
-            text,
-            self.content_type,
-            output=output,
-        )
+    ) -> GeoFeedInfo | str:
+        """Compute detailed geofeed info asynchronously."""
+        await self._ensure_loaded()
+        return await asyncio.to_thread(self._do_info, top_n=top_n, output=output)
 
 
 __all__ = ["AsyncGeoFeed", "FetchError", "GeoFeedDiscoveryError"]

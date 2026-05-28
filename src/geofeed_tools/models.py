@@ -160,26 +160,132 @@ class DoctorResult:
 
 
 @dataclass(frozen=True)
-class GeoFeedInfo:
-    """High-level statistics for a geofeed source."""
+class CountryStatistics:
+    """Per-country prefix and /24 / /48 coverage within a GeoFeedInfo breakdown.
 
-    source: str
-    total_records: int
-    unique_prefixes: int
-    ipv4_records: int
-    ipv6_records: int
-    unique_countries: int
-    unique_regions: int
-    unique_cities: int
-    unique_postal_codes: int
-    duplicates: int
-    errors: int = 0
-    warnings: int = 0
-    metadata: dict[str, object] = field(default_factory=dict)
+    Address coverage is reported in /24-equivalents for IPv4 and /48-equivalents
+    for IPv6: a /23 contributes 2 /24s, a /24 contributes 1, two /25s sharing a
+    /24 contribute 1 between them, and a /25 by itself contributes 0.
+    """
+
+    country: str
+    prefixes_v4: int = 0
+    prefixes_v6: int = 0
+    slash_24s: int = 0
+    slash_48s: int = 0
+
+    @property
+    def prefixes_total(self) -> int:
+        """Sum of IPv4 and IPv6 prefix counts."""
+        return self.prefixes_v4 + self.prefixes_v6
 
     def as_dict(self) -> dict[str, object]:
-        """Return a JSON-serializable representation of the info payload."""
-        return asdict(self)
+        """Return a JSON-serializable representation."""
+        return {
+            "country": self.country,
+            "prefixes_total": self.prefixes_total,
+            "prefixes_v4": self.prefixes_v4,
+            "prefixes_v6": self.prefixes_v6,
+            "slash_24s": self.slash_24s,
+            "slash_48s": self.slash_48s,
+        }
+
+
+@dataclass(frozen=True)
+class NormalizationPreview:
+    """Projected counts after a default ``normalize()`` pass.
+
+    Useful for showing how much a feed could shrink: ``invalid_removed`` covers
+    rows that fail strict CIDR parsing (and host-bit fixing), while
+    ``aggregated`` covers rows folded into supernets or removed as duplicates.
+    """
+
+    prefixes_total: int
+    prefixes_v4: int
+    prefixes_v6: int
+    slash_24s: int
+    slash_48s: int
+    invalid_removed: int
+    aggregated: int
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        return {
+            "prefixes_total": self.prefixes_total,
+            "prefixes_v4": self.prefixes_v4,
+            "prefixes_v6": self.prefixes_v6,
+            "slash_24s": self.slash_24s,
+            "slash_48s": self.slash_48s,
+            "invalid_removed": self.invalid_removed,
+            "aggregated": self.aggregated,
+        }
+
+
+@dataclass(frozen=True)
+class GeoFeedInfo:
+    """Detailed counts and breakdowns for a geofeed source.
+
+    Address coverage is reported in /24-equivalents (``slash_24s``) and
+    /48-equivalents (``slash_48s``) so the numbers stay readable even for
+    feeds that cover large swathes of IPv6 space.
+    """
+
+    source: str
+    prefixes_v4: int
+    prefixes_v6: int
+    unique_prefixes: int
+    duplicates: int
+    slash_24s: int
+    slash_48s: int
+    unique_countries: int = 0
+    unique_regions: int = 0
+    unique_cities: int = 0
+    unique_postal_codes: int = 0
+    errors: int = 0
+    warnings: int = 0
+    by_country: tuple[CountryStatistics, ...] = ()
+    prefix_length_v4: tuple[tuple[int, int], ...] = ()
+    prefix_length_v6: tuple[tuple[int, int], ...] = ()
+    top_regions: tuple[tuple[str, int], ...] = ()
+    top_cities: tuple[tuple[str, int], ...] = ()
+    normalized: NormalizationPreview | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def prefixes_total(self) -> int:
+        """Sum of IPv4 and IPv6 prefix counts."""
+        return self.prefixes_v4 + self.prefixes_v6
+
+    @property
+    def total_records(self) -> int:
+        """Alias for ``prefixes_total``."""
+        return self.prefixes_total
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable representation."""
+        return {
+            "source": self.source,
+            "prefixes_total": self.prefixes_total,
+            "prefixes_v4": self.prefixes_v4,
+            "prefixes_v6": self.prefixes_v6,
+            "unique_prefixes": self.unique_prefixes,
+            "duplicates": self.duplicates,
+            "slash_24s": self.slash_24s,
+            "slash_48s": self.slash_48s,
+            "unique_countries": self.unique_countries,
+            "unique_regions": self.unique_regions,
+            "unique_cities": self.unique_cities,
+            "unique_postal_codes": self.unique_postal_codes,
+            "errors": self.errors,
+            "warnings": self.warnings,
+            "by_country": [c.as_dict() for c in self.by_country],
+            "prefix_length_v4": [{"prefixlen": pl, "count": count} for pl, count in self.prefix_length_v4],
+            "prefix_length_v6": [{"prefixlen": pl, "count": count} for pl, count in self.prefix_length_v6],
+            "top_regions": [{"region": region, "count": count} for region, count in self.top_regions],
+            "top_cities": [{"city": city, "count": count} for city, count in self.top_cities],
+            "normalized": self.normalized.as_dict() if self.normalized is not None else None,
+            "metadata": dict(self.metadata),
+        }
 
 
 class GeoFeedDiscoveryError(Exception):

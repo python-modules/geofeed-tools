@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import csv
 import ipaddress
 from dataclasses import dataclass
 
+from ._net_utils import Network
 from .logging import TRACE_LEVEL, logger
 from .models import GeofeedRecord, QueryResult
-from .parsing import iter_data_lines_with_raw, normalize_fields, parse_record
-
-Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+from .parsing import iter_records
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,50 +79,43 @@ def load_query_records(
     skipped_missing_prefix = 0
     skipped_invalid_prefix = 0
 
-    for lineno, raw_line, data in iter_data_lines_with_raw(text):
-        try:
-            fields = parse_record(data)
-        except csv.Error as exc:
+    for line in iter_records(text, strict=True):
+        if line.csv_error is not None:
             skipped_csv_errors += 1
             logger.log(
                 TRACE_LEVEL,
                 "Skipping geofeed line during query indexing due to CSV error: line=%d error=%s",
-                lineno,
-                exc,
+                line.lineno,
+                line.csv_error,
             )
             continue
-
-        prefix, country, region, city, postal = normalize_fields(fields)
-        if not prefix:
+        if not line.prefix:
             skipped_missing_prefix += 1
             logger.log(
                 TRACE_LEVEL,
                 "Skipping geofeed line during query indexing due to missing prefix: line=%d",
-                lineno,
+                line.lineno,
             )
             continue
-
-        try:
-            network = ipaddress.ip_network(prefix, strict=True)
-        except ValueError as exc:
+        if line.network is None:
             skipped_invalid_prefix += 1
             logger.log(
                 TRACE_LEVEL,
                 "Skipping geofeed line during query indexing due to invalid prefix: line=%d prefix=%r error=%s",
-                lineno,
-                prefix,
-                exc,
+                line.lineno,
+                line.prefix,
+                line.network_error,
             )
             continue
 
-        last_by_prefix[network] = GeofeedRecord(
-            prefix=str(network),
-            country=country,
-            region=region,
-            city=city,
-            postal_code=postal,
-            line=lineno,
-            raw_line=raw_line,
+        last_by_prefix[line.network] = GeofeedRecord(
+            prefix=str(line.network),
+            country=line.country,
+            region=line.region,
+            city=line.city,
+            postal_code=line.postal,
+            line=line.lineno,
+            raw_line=line.raw_line,
         )
 
     index = QueryIndex.from_items(list(last_by_prefix.items()))
@@ -228,9 +219,10 @@ def _walk_query_path(
 
     for depth in range(query_network.prefixlen):
         bit = (address_value >> (max_prefixlen - depth - 1)) & 1
-        node = node.zero if bit == 0 else node.one
-        if node is None:
+        next_node = node.zero if bit == 0 else node.one
+        if next_node is None:
             return None, indices
+        node = next_node
         if node.entry_index is not None:
             indices.append(node.entry_index)
 

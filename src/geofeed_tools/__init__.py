@@ -3,11 +3,13 @@
 from .async_core import AsyncGeoFeed
 from .core import GeoFeed
 from .models import (
+    CountryStatistics,
     DoctorLookup,
     DoctorResult,
     GeoFeedDiscoveryError,
     GeoFeedInfo,
     GeofeedRecord,
+    NormalizationPreview,
     QueryResult,
     ValidationIssue,
     ValidationReport,
@@ -15,12 +17,14 @@ from .models import (
 
 __all__ = [
     "AsyncGeoFeed",
+    "CountryStatistics",
     "DoctorLookup",
     "DoctorResult",
     "GeoFeed",
     "GeoFeedDiscoveryError",
     "GeoFeedInfo",
     "GeofeedRecord",
+    "NormalizationPreview",
     "QueryResult",
     "ValidationIssue",
     "ValidationReport",

@@ -1,5 +1,27 @@
 # geofeed-tools Changelog
 
+## 2026-05-28 - 0.2.0
+
+Major changes:
+
+- Pretty format CLI output by default with colours and better messages
+- Add "--format" flag for CLI commands to choose between rich/plain/grep/json
+- Add filter API/CLI command
+- Remove `hook` CLI command - merged into `validate` command
+- Accept an IP address or prefix instead of file/URL to load geofeed for. If an IP/prefix is provided RDAP will be used to discover the geofeed file.
+- Remove `lookup` command/API - merged into `query` command
+
+Other changes:
+
+- Misc small fixups
+- Refactor things to reduce complexity
+- Drop CLI requirement for tabulate and use rich for formatting (already pulled in from tabulate)
+- Update info command to provide actual useful information and statistics
+- Default to showing help message without args/command provided
+- Fix caching across subsequent method calls
+- Split renderer for readability
+- Add more logging/debugging messages
+
 ## 2026-05-26 - 0.1.2
 
 - Improve query cache handling

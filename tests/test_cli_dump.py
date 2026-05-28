@@ -17,9 +17,27 @@ def fixture_path(name: str) -> str:
     return str(Path(__file__).parent / "fixtures" / name)
 
 
-def test_dump_defaults_to_json() -> None:
-    """Dump should default to JSON output with validation fields."""
-    result = runner.invoke(build_app(), ["dump", fixture_path("valid_geofeed.csv")])
+def test_dump_defaults_to_rich() -> None:
+    """Dump should default to the rich human-readable format."""
+    result = runner.invoke(
+        build_app(),
+        ["dump", fixture_path("valid_geofeed.csv")],
+        env={"COLUMNS": "200"},
+    )
+
+    assert result.exit_code == 0
+    assert "Prefix" in result.stdout
+    assert "192.0.2.0/24" in result.stdout
+    # Rich rendering uses box-drawing characters not present in plain CSV/JSON.
+    assert "╭" in result.stdout or "│" in result.stdout
+
+
+def test_dump_json_format() -> None:
+    """Dump in json mode should emit a JSON array with validation fields."""
+    result = runner.invoke(
+        build_app(),
+        ["dump", fixture_path("valid_geofeed.csv"), "--format", "json"],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -29,11 +47,11 @@ def test_dump_defaults_to_json() -> None:
     assert payload[0]["validation_messages"] == []
 
 
-def test_dump_csv_format_emits_geofeed_rows() -> None:
-    """Dump should emit standard geofeed CSV rows in csv mode."""
+def test_dump_grep_format_emits_geofeed_rows() -> None:
+    """Dump in grep mode should emit standard 5-column geofeed CSV rows."""
     result = runner.invoke(
         build_app(),
-        ["dump", fixture_path("valid_geofeed.csv"), "--format", "csv"],
+        ["dump", fixture_path("valid_geofeed.csv"), "--format", "grep"],
     )
 
     assert result.exit_code == 0
@@ -44,16 +62,18 @@ def test_dump_csv_format_emits_geofeed_rows() -> None:
     ]
 
 
-def test_dump_table_format_emits_tabulated_output() -> None:
-    """Dump should emit a tabulated view in table mode."""
+def test_dump_plain_format_emits_text_table() -> None:
+    """Dump in plain mode should emit an unstyled aligned table."""
     result = runner.invoke(
         build_app(),
-        ["dump", fixture_path("valid_geofeed.csv"), "--format", "table"],
+        ["dump", fixture_path("valid_geofeed.csv"), "--format", "plain"],
+        env={"COLUMNS": "200"},
     )
 
     assert result.exit_code == 0
-    assert "| Prefix" in result.stdout
-    assert "| Country" in result.stdout
-    assert "| Valid" in result.stdout
+    assert "Prefix" in result.stdout
     assert "192.0.2.0/24" in result.stdout
     assert "San Francisco" in result.stdout
+    # Plain mode must not draw the rich box characters.
+    assert "╭" not in result.stdout
+    assert "│" not in result.stdout

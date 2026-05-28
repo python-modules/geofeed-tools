@@ -30,32 +30,19 @@ def test_local_fixture_parse_returns_records(source: str) -> None:
     assert len(records) > 0, f"No records parsed from {source}"
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        pytest.param(fixture_path("cloudflare_geofeed.csv"), id="cloudflare"),
-        pytest.param(
-            fixture_path("nttgin_geofeed.csv"),
-            id="nttgin",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "nttgin fixture contains invalid prefix "
-                    "'165.254.252.023' which currently raises ValueError "
-                    "inside info()"
-                ),
-            ),
-        ),
-        pytest.param(fixture_path("tmobile_geofeed.csv"), id="tmobile"),
-    ],
-)
+@pytest.mark.parametrize("source", LOCAL_SOURCES)
 def test_local_fixture_info_totals(source: str) -> None:
-    """Info totals should be internally consistent for local fixtures."""
+    """Info totals should be internally consistent for local fixtures.
+
+    The new info() implementation tolerates invalid prefixes by skipping them
+    when computing per-version counts, so even fixtures with malformed rows
+    (e.g. nttgin's '165.254.252.023') produce a usable summary.
+    """
     geofeed = GeoFeed(source)
     info = geofeed.info(output="objects")
     assert not isinstance(info, str)
     assert info.total_records > 0, f"No records reported in info for {source}"
-    assert info.ipv4_records + info.ipv6_records == info.total_records
+    assert info.prefixes_v4 + info.prefixes_v6 == info.total_records
 
 
 @pytest.mark.parametrize("source", LOCAL_SOURCES)

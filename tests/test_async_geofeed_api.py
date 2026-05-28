@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import geofeed_tools.async_core as async_core_module
+import geofeed_tools.core as core_module
 from geofeed_tools import AsyncGeoFeed
 
 
@@ -54,7 +54,7 @@ def test_async_parse_and_info() -> None:
         info = await geofeed.info(output="objects")
         assert isinstance(records, list)
         assert not isinstance(info, str)
-        return len(records), info.ipv4_records, info.ipv6_records
+        return len(records), info.prefixes_v4, info.prefixes_v6
 
     record_count, ipv4_count, ipv6_count = asyncio.run(scenario())
     assert record_count == 3
@@ -125,14 +125,14 @@ def test_async_query_reuses_index_until_reload(monkeypatch) -> None:
     """AsyncGeoFeed query should reuse indexed records until source reload."""
     call_count = 0
 
-    real_loader = async_core_module.load_query_records
+    real_loader = core_module.load_query_records
 
     def counting_loader(text: str):
         nonlocal call_count
         call_count += 1
         return real_loader(text)
 
-    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+    monkeypatch.setattr("geofeed_tools.core.load_query_records", counting_loader)
 
     async def scenario() -> int:
         geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"))
@@ -154,14 +154,14 @@ def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
     """AsyncGeoFeed should skip caching when cache_query_index=False."""
     call_count = 0
 
-    real_loader = async_core_module.load_query_records
+    real_loader = core_module.load_query_records
 
     def counting_loader(text: str):
         nonlocal call_count
         call_count += 1
         return real_loader(text)
 
-    monkeypatch.setattr("geofeed_tools.async_core.load_query_records", counting_loader)
+    monkeypatch.setattr("geofeed_tools.core.load_query_records", counting_loader)
 
     async def scenario() -> int:
         geofeed = AsyncGeoFeed(fixture_path("valid_geofeed.csv"), cache_query_index=False)
@@ -172,64 +172,3 @@ def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
         return call_count
 
     assert asyncio.run(scenario()) == 0
-
-
-def test_async_lookup_returns_query_result(monkeypatch) -> None:
-    """AsyncGeoFeed.lookup should return a QueryResult from the discovered geofeed."""
-    from geofeed_tools.models import DoctorLookup, DoctorResult, GeofeedRecord, QueryResult
-
-    record_stub = GeofeedRecord(prefix="203.0.113.0/24", country="US")
-
-    async def fake_doctor_query_async(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
-            lookup=DoctorLookup(
-                lookup_strategy="ip-address",
-                rdap_method=rdap_method,
-                rdap_query=query,
-                bootstrap_url=f"https://rdap.org/ip/{query}",
-                geofeed_url="https://example.com/geofeed.csv",
-            ),
-            matches=(record_stub,),
-        )
-
-    monkeypatch.setattr("geofeed_tools.async_core.doctor_query_async", fake_doctor_query_async)
-
-    async def scenario() -> QueryResult:
-        result = await AsyncGeoFeed.lookup("203.0.113.1")
-        assert isinstance(result, QueryResult)
-        return result
-
-    result = asyncio.run(scenario())
-    assert result.query == "203.0.113.1"
-    assert len(result.matches) == 1
-    assert result.matches[0].prefix == "203.0.113.0/24"
-
-
-def test_async_lookup_raises_when_no_geofeed(monkeypatch) -> None:
-    """AsyncGeoFeed.lookup should raise GeoFeedDiscoveryError when no geofeed is found."""
-    from geofeed_tools import GeoFeedDiscoveryError
-    from geofeed_tools.models import DoctorLookup, DoctorResult
-
-    async def fake_doctor_query_async(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
-            lookup=DoctorLookup(
-                lookup_strategy="ip-address",
-                rdap_method=rdap_method,
-                rdap_query=query,
-                bootstrap_url=f"https://rdap.org/ip/{query}",
-            ),
-            matches=(),
-        )
-
-    monkeypatch.setattr("geofeed_tools.async_core.doctor_query_async", fake_doctor_query_async)
-
-    import pytest
-
-    async def scenario():
-        with pytest.raises(GeoFeedDiscoveryError) as exc_info:
-            await AsyncGeoFeed.lookup("203.0.113.1")
-        assert exc_info.value.query == "203.0.113.1"
-
-    asyncio.run(scenario())

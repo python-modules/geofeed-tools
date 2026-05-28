@@ -48,15 +48,23 @@ def configure_logging(verbosity: int = 0) -> None:
 def configure_cli_structlog(verbosity: int = 0) -> None:
     """Configure structlog console logging for the optional CLI."""
     # CLI dependencies are optional; import lazily to keep core module lean.
+    from collections.abc import Callable, Mapping, MutableMapping
+    from typing import Any, cast
+
     import structlog
+
+    Processor = Callable[  # noqa: N806 — local type alias keeps PascalCase
+        [Any, str, MutableMapping[str, Any]],
+        Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
+    ]
 
     level = _verbosity_to_level(verbosity)
 
     timestamper = structlog.processors.TimeStamper(fmt="%H:%M:%S")
-    shared_processors = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        timestamper,
+    shared_processors: list[Processor] = [
+        cast(Processor, structlog.contextvars.merge_contextvars),
+        cast(Processor, structlog.stdlib.add_log_level),
+        cast(Processor, timestamper),
     ]
     renderer = structlog.dev.ConsoleRenderer(
         colors=True,

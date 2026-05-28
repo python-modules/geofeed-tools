@@ -57,7 +57,7 @@ def test_cli_doctor_emits_json(monkeypatch) -> None:
 
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", FakeGeoFeed)
 
-    result = runner.invoke(build_app(), ["doctor", "203.0.113.1", "--json"])
+    result = runner.invoke(build_app(), ["doctor", "203.0.113.1", "--format", "json"])
 
     assert result.exit_code == 0
     assert FakeGeoFeed.last_rdap_method == "rdap.org"
@@ -100,7 +100,7 @@ def test_cli_doctor_returns_nonzero_when_not_found(monkeypatch) -> None:
     result = runner.invoke(build_app(), ["doctor", "203.0.113.1"])
 
     assert result.exit_code == 1
-    assert "Geofeed URL: not found" in result.stdout
+    assert "no geofeed reference published" in result.stdout
 
 
 def test_cli_doctor_accepts_iana_bootstrap_override(monkeypatch) -> None:
@@ -146,4 +146,5 @@ def test_cli_doctor_accepts_iana_bootstrap_override(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert FakeGeoFeed.last_rdap_method == "iana-bootstrap"
-    assert "RDAP method: iana-bootstrap" in result.stdout
+    assert "RDAP method" in result.stdout
+    assert "iana-bootstrap" in result.stdout

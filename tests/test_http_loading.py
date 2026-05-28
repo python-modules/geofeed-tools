@@ -76,7 +76,7 @@ def test_http_info_totals(url: str) -> None:
     info = geofeed.info(output="objects")
     assert not isinstance(info, str)
     assert info.total_records > 0, f"No records reported in info for {url}"
-    assert info.ipv4_records + info.ipv6_records == info.total_records
+    assert info.prefixes_v4 + info.prefixes_v6 == info.total_records
 
 
 @pytest.mark.integration
