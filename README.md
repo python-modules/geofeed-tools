@@ -5,6 +5,7 @@
 - [geofeed-tools](#geofeed-tools)
   - [Basic Overview](#basic-overview)
   - [Installation](#installation)
+    - [uv](#uv)
     - [Docker](#docker)
   - [Python API](#python-api)
     - [Quick Start](#quick-start)
@@ -81,6 +82,14 @@ Install development dependencies:
 
 ```bash
 python3 -m pip install 'geofeed-tools[dev]'
+```
+
+### uv
+
+To run the CLI with `uv` directly:
+
+```bash
+uv tool run 'geofeed-tools[cli]' --help
 ```
 
 ### Docker
