@@ -121,7 +121,7 @@ def build_app():
     """Build and return the Typer application."""
     import typer as _typer
 
-    app = _typer.Typer(help="GeoFeed tools CLI")
+    app = _typer.Typer(help="GeoFeed tools CLI", no_args_is_help=True)
     _register_dump_command(app, _typer)
     _register_validate_command(app, _typer)
     _register_normalize_command(app, _typer)
