@@ -3,38 +3,14 @@
 from __future__ import annotations
 
 import collections
-import csv
 import ipaddress
-from typing import TypeVar, cast
+from typing import cast
 
+from ._net_utils import Network, collapse_same_version, network_version
 from .config import TRACE_LEVEL
 from .logging import logger
 from .models import GeofeedRecord
-from .parsing import iter_data_lines, normalize_fields, parse_record
-
-Network = ipaddress.IPv4Network | ipaddress.IPv6Network
-_NetworkV = TypeVar("_NetworkV", ipaddress.IPv4Network, ipaddress.IPv6Network)
-
-
-def parse_for_normalize(
-    text: str,
-) -> list[tuple[Network, str, str, str, str, int]]:
-    """Parse text into normalization-ready tuples."""
-    records: list[tuple[Network, str, str, str, str, int]] = []
-    for lineno, data in iter_data_lines(text):
-        try:
-            fields = parse_record(data)
-        except csv.Error:
-            continue
-        prefix, country, region, city, postal = normalize_fields(fields)
-        if not prefix:
-            continue
-        try:
-            network = ipaddress.ip_network(prefix, strict=True)
-        except ValueError:
-            continue
-        records.append((network, country, region, city, postal, lineno))
-    return records
+from .parsing import iter_records
 
 
 def normalize_records(
@@ -71,7 +47,7 @@ def normalize_records(
     if sort:
         emitted = sorted(
             emitted,
-            key=lambda row: (_network_version(row[0]), row[0]),
+            key=lambda row: (network_version(row[0]), row[0]),
         )
 
     return [
@@ -97,36 +73,52 @@ def _parse_and_fix(
     skipped_lines = 0
     skipped_invalid_prefixes = 0
     host_bit_fixes = 0
-    for lineno, data in iter_data_lines(text):
-        parsed = _parse_line(data)
-        if parsed is None:
+    for line in iter_records(text, strict=True):
+        if line.csv_error is not None:
             skipped_lines += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during normalization due to CSV error: line=%d error=%s",
+                line.lineno,
+                line.csv_error,
+            )
+            continue
+        if not line.prefix:
+            skipped_lines += 1
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping geofeed line during normalization due to missing prefix: line=%d",
+                line.lineno,
+            )
             continue
 
-        prefix, country, region, city, postal = parsed
-        network = _parse_network(prefix, fix_host_bits)
+        network = line.network
+        if network is None and fix_host_bits:
+            try:
+                network = ipaddress.ip_network(line.prefix, strict=False)
+            except ValueError:
+                network = None
         if network is None:
             skipped_invalid_prefixes += 1
             logger.log(
                 TRACE_LEVEL,
                 "Skipping geofeed line during normalization due to invalid prefix: line=%d prefix=%r",
-                lineno,
-                prefix,
+                line.lineno,
+                line.prefix,
             )
             continue
-        if fix_host_bits and str(network) != prefix:
+        if fix_host_bits and str(network) != line.prefix:
             host_bit_fixes += 1
             logger.log(
                 TRACE_LEVEL,
                 "Normalized host bits during geofeed normalization: line=%d original_prefix=%r normalized_prefix=%s",
-                lineno,
-                prefix,
+                line.lineno,
+                line.prefix,
                 network,
             )
 
-        country, region = _normalize_case(country, region, uppercase)
-
-        records.append((network, country, region, city, postal, lineno))
+        country, region = _normalize_case(line.country, line.region, uppercase)
+        records.append((network, country, region, line.city, line.postal, line.lineno))
 
     logger.debug(
         "Prepared geofeed normalization records: records=%d skipped_lines=%d skipped_invalid_prefixes=%d host_bit_fixes=%d",
@@ -137,41 +129,6 @@ def _parse_and_fix(
     )
 
     return records
-
-
-def _parse_line(data: str) -> list[str] | None:
-    """Parse and normalize one CSV data line."""
-    try:
-        fields = parse_record(data)
-    except csv.Error as exc:
-        logger.log(
-            TRACE_LEVEL,
-            "Skipping geofeed line during normalization due to CSV error: error=%s",
-            exc,
-        )
-        return None
-    parsed = normalize_fields(fields)
-    if not parsed[0]:
-        logger.log(TRACE_LEVEL, "Skipping geofeed line during normalization due to missing prefix")
-        return None
-    return parsed
-
-
-def _parse_network(
-    prefix: str,
-    fix_host_bits: bool,
-) -> Network | None:
-    """Parse a prefix and optionally normalize host bits."""
-    network: Network | None = None
-    try:
-        network = ipaddress.ip_network(prefix, strict=True)
-    except ValueError:
-        if fix_host_bits:
-            try:
-                network = ipaddress.ip_network(prefix, strict=False)
-            except ValueError:
-                network = None
-    return network
 
 
 def _normalize_case(
@@ -194,16 +151,16 @@ def _aggregate(
     """Aggregate collapsible prefixes per identical metadata tuple."""
     by_key: dict[tuple, list[tuple[Network, int]]] = collections.defaultdict(list)
     for network, country, region, city, postal, lineno in records:
-        by_key[(_network_version(network), country, region, city, postal)].append((network, lineno))
+        by_key[(network_version(network), country, region, city, postal)].append((network, lineno))
 
     out: list[tuple[Network, str, str, str, str]] = []
     for (_version, country, region, city, postal), entries in by_key.items():
         unique = {network for network, _lineno in entries}
         if _version == 4:
-            for network in _collapse_same_version([cast(ipaddress.IPv4Network, network) for network in unique]):
+            for network in collapse_same_version([cast(ipaddress.IPv4Network, network) for network in unique]):
                 out.append((network, country, region, city, postal))
         else:
-            for network in _collapse_same_version([cast(ipaddress.IPv6Network, network) for network in unique]):
+            for network in collapse_same_version([cast(ipaddress.IPv6Network, network) for network in unique]):
                 out.append((network, country, region, city, postal))
     logger.debug(
         "Aggregated geofeed normalization records: input=%d groups=%d output=%d",
@@ -212,18 +169,6 @@ def _aggregate(
         len(out),
     )
     return out
-
-
-def _network_version(network: Network) -> int:
-    """Return network IP version as integer."""
-    return 4 if isinstance(network, ipaddress.IPv4Network) else 6
-
-
-def _collapse_same_version(networks: list[_NetworkV]) -> list[_NetworkV]:
-    """Collapse networks that are known to share the same IP version."""
-    if not networks:
-        return []
-    return list(ipaddress.collapse_addresses(networks))
 
 
 def _dedupe(

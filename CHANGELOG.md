@@ -3,6 +3,7 @@
 ## PENDING - 0.2.0
 
 - Misc small fixups
+- Refactor things to reduce complexity
 
 ## 2026-05-26 - 0.1.2
 

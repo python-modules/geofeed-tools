@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+from typing import TypeVar
+
 from ._query_cache import QueryIndex, QueryIndexCache
 from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .doctor import doctor_query, render_doctor_text
@@ -22,36 +25,73 @@ from .parse import annotate_validity, parse_text, parse_text_with_networks
 from .query import load_query_records, query_text
 from .validate import render_validation_text, validate_bytes
 
-
-def _validate_output(output: str, allowed: tuple[str, ...]) -> None:
-    if output not in allowed:
-        raise ValueError(f"output must be one of: {', '.join(allowed)}")
+T = TypeVar("T")
 
 
-def _serialize_query_result(
-    result: QueryResult,
+def _emit(
+    obj: T,
     *,
     output: str,
-) -> QueryResult | str:
-    _validate_output(output, ("objects", "json", "csv"))
+    serializers: Mapping[str, Callable[[T], str]],
+    summary: str,
+) -> T | str:
+    """Validate the output mode, optionally serialize, and log completion."""
+    if output != "objects" and output not in serializers:
+        allowed = ", ".join(("objects", *serializers))
+        raise ValueError(f"output must be one of: {allowed}")
     if output == "objects":
-        return result
-    if output == "json":
-        return query_to_json(result)
-    return records_to_csv(result.matches, include_validation=False)
+        logger.debug("%s output=%s", summary, output)
+        return obj
+    payload = serializers[output](obj)
+    logger.debug("%s output=%s payload_chars=%d", summary, output, len(payload))
+    return payload
 
 
-def _serialize_doctor_result(
-    result: DoctorResult,
-    *,
-    output: str,
-) -> DoctorResult | str:
-    _validate_output(output, ("objects", "json", "text"))
-    if output == "objects":
-        return result
-    if output == "json":
-        return doctor_to_json(result)
-    return render_doctor_text(result)
+_QUERY_SERIALIZERS: Mapping[str, Callable[[QueryResult], str]] = {
+    "json": query_to_json,
+    "csv": lambda result: records_to_csv(result.matches, include_validation=False),
+}
+
+_DOCTOR_SERIALIZERS: Mapping[str, Callable[[DoctorResult], str]] = {
+    "json": doctor_to_json,
+    "text": render_doctor_text,
+}
+
+_INFO_SERIALIZERS: Mapping[str, Callable[[GeoFeedInfo], str]] = {
+    "json": info_to_json,
+}
+
+
+def _records_serializers(*, include_validation: bool) -> Mapping[str, Callable[[list[GeofeedRecord]], str]]:
+    return {
+        "json": lambda records: records_to_json(records, include_validation=include_validation),
+        "csv": lambda records: records_to_csv(records, include_validation=include_validation),
+    }
+
+
+def _validation_serializers() -> Mapping[str, Callable[[ValidationReport], str]]:
+    return {
+        "json": report_to_json,
+        "text": render_validation_text,
+    }
+
+
+def _serialize_query_result(result: QueryResult, *, output: str) -> QueryResult | str:
+    return _emit(
+        result,
+        output=output,
+        serializers=_QUERY_SERIALIZERS,
+        summary=f"Query result serialized: matches={len(result.matches)}",
+    )
+
+
+def _serialize_doctor_result(result: DoctorResult, *, output: str) -> DoctorResult | str:
+    return _emit(
+        result,
+        output=output,
+        serializers=_DOCTOR_SERIALIZERS,
+        summary=f"Doctor result serialized: query={result.query} matches={len(result.matches)}",
+    )
 
 
 def _build_lookup_result(result: DoctorResult) -> QueryResult:
@@ -69,21 +109,9 @@ def _build_parsed_records(
     include_validation: bool,
     normalize: bool,
 ) -> list[GeofeedRecord]:
-    logger.debug(
-        "Building parsed geofeed records: source=%s include_validation=%s normalize=%s",
-        source,
-        include_validation,
-        normalize,
-    )
     records = normalize_records(text) if normalize else parse_text(text)
     if include_validation:
-        records = annotate_validity(
-            records,
-            source=source,
-            raw=raw,
-            content_type=content_type,
-        )
-    logger.debug("Built parsed geofeed records: source=%s records=%d", source, len(records))
+        records = annotate_validity(records, source=source, raw=raw, content_type=content_type)
     return records
 
 
@@ -97,15 +125,7 @@ def _parse_loaded(
     normalize: bool = False,
     output: str = "objects",
 ) -> list[GeofeedRecord] | str:
-    _validate_output(output, ("objects", "json", "csv"))
     logger.info("Parsing geofeed records from %s source: %s", source_kind(source), source)
-    logger.debug(
-        "Parse options: source=%s include_validation=%s normalize=%s output=%s",
-        source,
-        include_validation,
-        normalize,
-        output,
-    )
     records = _build_parsed_records(
         source,
         raw,
@@ -114,59 +134,11 @@ def _parse_loaded(
         include_validation=include_validation,
         normalize=normalize,
     )
-    if output == "objects":
-        logger.debug("Parse completed: source=%s records=%d output=%s", source, len(records), output)
-        return records
-    if output == "json":
-        payload = records_to_json(
-            records,
-            include_validation=include_validation,
-        )
-        logger.debug(
-            "Parse completed: source=%s records=%d output=%s payload_chars=%d",
-            source,
-            len(records),
-            output,
-            len(payload),
-        )
-        return payload
-    payload = records_to_csv(
+    return _emit(
         records,
-        include_validation=include_validation,
-    )
-    logger.debug(
-        "Parse completed: source=%s records=%d output=%s payload_chars=%d",
-        source,
-        len(records),
-        output,
-        len(payload),
-    )
-    return payload
-
-
-def _build_validation_report(
-    source: str,
-    raw: bytes,
-    content_type: str | None,
-    *,
-    check_sort: bool = True,
-    check_content_type: bool = True,
-    check_aggregation: bool = False,
-) -> ValidationReport:
-    logger.debug(
-        "Building validation report: source=%s check_sort=%s check_content_type=%s check_aggregation=%s",
-        source,
-        check_sort,
-        check_content_type,
-        check_aggregation,
-    )
-    return validate_bytes(
-        raw,
-        source,
-        content_type,
-        check_sort=check_sort,
-        check_content_type=check_content_type,
-        check_aggregation=check_aggregation,
+        output=output,
+        serializers=_records_serializers(include_validation=include_validation),
+        summary=f"Parse completed: source={source} records={len(records)}",
     )
 
 
@@ -180,57 +152,24 @@ def _validate_loaded(
     check_aggregation: bool = False,
     output: str = "objects",
 ) -> ValidationReport | str:
-    _validate_output(output, ("objects", "json", "text"))
     logger.info("Validating geofeed source: %s", source)
-    logger.debug(
-        "Validation options: source=%s check_sort=%s check_content_type=%s check_aggregation=%s output=%s",
-        source,
-        check_sort,
-        check_content_type,
-        check_aggregation,
-        output,
-    )
-    report = _build_validation_report(
-        source,
+    report = validate_bytes(
         raw,
+        source,
         content_type,
         check_sort=check_sort,
         check_content_type=check_content_type,
         check_aggregation=check_aggregation,
     )
-    if output == "objects":
-        logger.debug(
-            "Validation completed: source=%s records=%d errors=%d warnings=%d output=%s",
-            source,
-            report.records,
-            report.errors,
-            report.warnings,
-            output,
-        )
-        return report
-    if output == "json":
-        payload = report_to_json(report)
-        logger.debug(
-            "Validation completed: source=%s records=%d errors=%d warnings=%d output=%s payload_chars=%d",
-            source,
-            report.records,
-            report.errors,
-            report.warnings,
-            output,
-            len(payload),
-        )
-        return payload
-    payload = render_validation_text(report)
-    logger.debug(
-        "Validation completed: source=%s records=%d errors=%d warnings=%d output=%s payload_chars=%d",
-        source,
-        report.records,
-        report.errors,
-        report.warnings,
-        output,
-        len(payload),
+    return _emit(
+        report,
+        output=output,
+        serializers=_validation_serializers(),
+        summary=(
+            f"Validation completed: source={source} records={report.records}"
+            f" errors={report.errors} warnings={report.warnings}"
+        ),
     )
-    return payload
 
 
 def _normalize_loaded(
@@ -244,18 +183,7 @@ def _normalize_loaded(
     fix_host_bits: bool = True,
     output: str = "objects",
 ) -> list[GeofeedRecord] | str:
-    _validate_output(output, ("objects", "json", "csv"))
     logger.info("Normalizing geofeed source: %s", source)
-    logger.debug(
-        "Normalize options: source=%s uppercase=%s sort=%s aggregate=%s dedupe=%s fix_host_bits=%s output=%s",
-        source,
-        uppercase,
-        sort,
-        aggregate,
-        dedupe,
-        fix_host_bits,
-        output,
-    )
     records = normalize_records(
         text,
         uppercase=uppercase,
@@ -264,28 +192,12 @@ def _normalize_loaded(
         dedupe=dedupe,
         fix_host_bits=fix_host_bits,
     )
-    if output == "objects":
-        logger.debug("Normalize completed: source=%s records=%d output=%s", source, len(records), output)
-        return records
-    if output == "json":
-        payload = records_to_json(records, include_validation=False)
-        logger.debug(
-            "Normalize completed: source=%s records=%d output=%s payload_chars=%d",
-            source,
-            len(records),
-            output,
-            len(payload),
-        )
-        return payload
-    payload = records_to_csv(records, include_validation=False)
-    logger.debug(
-        "Normalize completed: source=%s records=%d output=%s payload_chars=%d",
-        source,
-        len(records),
-        output,
-        len(payload),
+    return _emit(
+        records,
+        output=output,
+        serializers=_records_serializers(include_validation=False),
+        summary=f"Normalize completed: source={source} records={len(records)}",
     )
-    return payload
 
 
 def _query_loaded(
@@ -299,14 +211,6 @@ def _query_loaded(
     indexed_records: QueryIndex | None = None,
 ) -> QueryResult | str:
     logger.info("Querying geofeed source: %s query=%s", source, query)
-    logger.debug(
-        "Query options: source=%s query=%s return_all=%s include_longer=%s output=%s",
-        source,
-        query,
-        return_all,
-        include_longer,
-        output,
-    )
     result = query_text(
         text,
         query,
@@ -314,27 +218,12 @@ def _query_loaded(
         include_longer=include_longer,
         indexed_records=indexed_records,
     )
-    serialized = _serialize_query_result(result, output=output)
-    if output == "objects":
-        logger.debug(
-            "Query completed: source=%s query=%s matches=%d output=%s",
-            source,
-            query,
-            len(result.matches),
-            output,
-        )
-        return serialized
-    payload = serialized
-    assert isinstance(payload, str)
-    logger.debug(
-        "Query completed: source=%s query=%s matches=%d output=%s payload_chars=%d",
-        source,
-        query,
-        len(result.matches),
-        output,
-        len(payload),
+    return _emit(
+        result,
+        output=output,
+        serializers=_QUERY_SERIALIZERS,
+        summary=f"Query completed: source={source} query={query} matches={len(result.matches)}",
     )
-    return payload
 
 
 def _info_loaded(
@@ -345,36 +234,19 @@ def _info_loaded(
     *,
     output: str = "objects",
 ) -> GeoFeedInfo | str:
-    _validate_output(output, ("objects", "json"))
     logger.info("Computing geofeed summary: %s", source)
     records, networks = parse_text_with_networks(text)
-    report = _build_validation_report(
-        source,
-        raw,
-        content_type,
-    )
+    report = validate_bytes(raw, source, content_type)
     info = build_info(source, records, report, networks=networks)
-    if output == "objects":
-        logger.debug(
-            "Computed geofeed summary: source=%s total_records=%d errors=%d warnings=%d output=%s",
-            source,
-            info.total_records,
-            info.errors,
-            info.warnings,
-            output,
-        )
-        return info
-    payload = info_to_json(info)
-    logger.debug(
-        "Computed geofeed summary: source=%s total_records=%d errors=%d warnings=%d output=%s payload_chars=%d",
-        source,
-        info.total_records,
-        info.errors,
-        info.warnings,
-        output,
-        len(payload),
+    return _emit(
+        info,
+        output=output,
+        serializers=_INFO_SERIALIZERS,
+        summary=(
+            f"Info completed: source={source} total_records={info.total_records}"
+            f" errors={info.errors} warnings={info.warnings}"
+        ),
     )
-    return payload
 
 
 def _doctor(
@@ -392,27 +264,7 @@ def _doctor(
         include_longer=include_longer,
         rdap_method=rdap_method,
     )
-    serialized = _serialize_doctor_result(result, output=output)
-    if output == "objects":
-        logger.debug(
-            "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s",
-            query,
-            result.lookup.geofeed_url,
-            len(result.matches),
-            output,
-        )
-        return serialized
-    payload = serialized
-    assert isinstance(payload, str)
-    logger.debug(
-        "Doctor completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-        query,
-        result.lookup.geofeed_url,
-        len(result.matches),
-        output,
-        len(payload),
-    )
-    return payload
+    return _serialize_doctor_result(result, output=output)
 
 
 def _lookup(
@@ -430,28 +282,7 @@ def _lookup(
         include_longer=include_longer,
         rdap_method=rdap_method,
     )
-    query_result = _build_lookup_result(result)
-    serialized = _serialize_query_result(query_result, output=output)
-    if output == "objects":
-        logger.debug(
-            "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s",
-            query,
-            result.lookup.geofeed_url,
-            len(query_result.matches),
-            output,
-        )
-        return serialized
-    payload = serialized
-    assert isinstance(payload, str)
-    logger.debug(
-        "Lookup completed: query=%s geofeed_url=%s matches=%d output=%s payload_chars=%d",
-        query,
-        result.lookup.geofeed_url,
-        len(query_result.matches),
-        output,
-        len(payload),
-    )
-    return payload
+    return _serialize_query_result(_build_lookup_result(result), output=output)
 
 
 class _GeoFeedBase:
@@ -465,11 +296,7 @@ class _GeoFeedBase:
         self.text: str | None = None
         self._query_index_state = QueryIndexCache(enabled=cache_query_index)
 
-    def _update_loaded_content(
-        self,
-        raw: bytes,
-        content_type: str | None,
-    ) -> str:
+    def _update_loaded_content(self, raw: bytes, content_type: str | None) -> str:
         """Store loaded bytes, decode text, and invalidate the query index cache."""
         self.raw = raw
         self.content_type = content_type
@@ -597,6 +424,14 @@ class GeoFeed(_GeoFeedBase):
         super().__init__(source, cache_query_index=cache_query_index)
         if auto_load:
             self.reload()
+
+    @classmethod
+    def from_source(cls, source: str, *, cache_query_index: bool = True) -> GeoFeed:
+        """Create an instance and eagerly load the source.
+
+        Symmetric with ``AsyncGeoFeed.from_source``; prefer this in new code.
+        """
+        return cls(source, auto_load=True, cache_query_index=cache_query_index)
 
     def reload(self) -> None:
         """Reload the source bytes and decoded text from disk or HTTP."""

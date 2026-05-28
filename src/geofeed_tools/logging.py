@@ -4,17 +4,10 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable, Mapping, MutableMapping
-from typing import Any, cast
 
 from .config import LOGGER_NAME, TRACE_LEVEL
 
 logger = logging.getLogger(LOGGER_NAME)
-
-Processor = Callable[
-    [Any, str, MutableMapping[str, Any]],
-    Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
-]
 
 logging.addLevelName(TRACE_LEVEL, "TRACE")
 
@@ -55,7 +48,15 @@ def configure_logging(verbosity: int = 0) -> None:
 def configure_cli_structlog(verbosity: int = 0) -> None:
     """Configure structlog console logging for the optional CLI."""
     # CLI dependencies are optional; import lazily to keep core module lean.
+    from collections.abc import Callable, Mapping, MutableMapping
+    from typing import Any, cast
+
     import structlog
+
+    Processor = Callable[  # noqa: N806 — local type alias keeps PascalCase
+        [Any, str, MutableMapping[str, Any]],
+        Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
+    ]
 
     level = _verbosity_to_level(verbosity)
 

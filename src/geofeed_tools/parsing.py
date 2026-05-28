@@ -3,42 +3,13 @@
 from __future__ import annotations
 
 import csv
-import threading
-from collections.abc import Iterable
+import ipaddress
+from collections.abc import Iterator
+from dataclasses import dataclass
+
+from ._net_utils import Network
 
 MAX_FIELDS = 5
-
-
-class _ReusableCSVLineSource:
-    """Single-line iterable backing a reusable csv.reader instance."""
-
-    def __init__(self) -> None:
-        self._line = ""
-        self._ready = False
-
-    def set_line(self, line: str) -> None:
-        self._line = line
-        self._ready = True
-
-    def __iter__(self) -> _ReusableCSVLineSource:
-        return self
-
-    def __next__(self) -> str:
-        if not self._ready:
-            raise StopIteration
-        self._ready = False
-        return self._line
-
-
-class _ThreadLocalCSVParser(threading.local):
-    """Per-thread reusable single-record CSV parser."""
-
-    def __init__(self) -> None:
-        self.source = _ReusableCSVLineSource()
-        self.reader = csv.reader(self.source)
-
-
-_CSV_PARSER = _ThreadLocalCSVParser()
 
 
 def split_comment(line: str) -> str:
@@ -61,17 +32,10 @@ def split_comment(line: str) -> str:
 
 def parse_record(data_line: str) -> list[str]:
     """Parse one CSV data line into fields."""
-    _CSV_PARSER.source.set_line(data_line)
-    return next(_CSV_PARSER.reader)
+    return next(csv.reader([data_line]))
 
 
-def iter_data_lines(text: str) -> Iterable[tuple[int, str]]:
-    """Yield line number and non-empty data content for feed lines."""
-    for lineno, _raw_line, data in iter_data_lines_with_raw(text):
-        yield lineno, data
-
-
-def iter_data_lines_with_raw(text: str) -> Iterable[tuple[int, str, str]]:
+def iter_data_lines_with_raw(text: str) -> Iterator[tuple[int, str, str]]:
     """Yield line number, original raw line, and parsed data for feed lines."""
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
         data = split_comment(raw_line).strip()
@@ -85,3 +49,74 @@ def normalize_fields(fields: list[str]) -> list[str]:
     while len(out) < MAX_FIELDS:
         out.append("")
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedLine:
+    """One parsed RFC 8805 data line with normalized fields and optional network."""
+
+    lineno: int
+    raw_line: str
+    raw_fields: list[str] | None
+    csv_error: csv.Error | None
+    prefix: str
+    country: str
+    region: str
+    city: str
+    postal: str
+    network: Network | None
+    network_error: ValueError | None
+
+    @property
+    def ok(self) -> bool:
+        """True iff CSV parsed, prefix present, and network parsed under requested strictness."""
+        return self.csv_error is None and bool(self.prefix) and self.network is not None
+
+
+def iter_records(text: str, *, strict: bool = True) -> Iterator[ParsedLine]:
+    """Yield ParsedLine objects for every non-empty data line.
+
+    Always emits one ParsedLine per data line; callers branch on csv_error,
+    missing prefix (``prefix == ""``), or network_error to handle error cases.
+    """
+    for lineno, raw_line, data in iter_data_lines_with_raw(text):
+        try:
+            raw_fields = parse_record(data)
+        except csv.Error as exc:
+            yield ParsedLine(
+                lineno=lineno,
+                raw_line=raw_line,
+                raw_fields=None,
+                csv_error=exc,
+                prefix="",
+                country="",
+                region="",
+                city="",
+                postal="",
+                network=None,
+                network_error=None,
+            )
+            continue
+
+        prefix, country, region, city, postal = normalize_fields(raw_fields)
+        network: Network | None = None
+        network_error: ValueError | None = None
+        if prefix:
+            try:
+                network = ipaddress.ip_network(prefix, strict=strict)
+            except ValueError as exc:
+                network_error = exc
+
+        yield ParsedLine(
+            lineno=lineno,
+            raw_line=raw_line,
+            raw_fields=raw_fields,
+            csv_error=None,
+            prefix=prefix,
+            country=country,
+            region=region,
+            city=city,
+            postal=postal,
+            network=network,
+            network_error=network_error,
+        )

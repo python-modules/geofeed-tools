@@ -43,6 +43,39 @@ JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
 
 
+def _verbose_option(typer):
+    """Shared --verbose/-v option, repeated across every command."""
+    return typer.Option(0, "-v", "--verbose", count=True, help=VERBOSE_HELP)
+
+
+def _json_option(typer):
+    """Shared --json option for commands that emit JSON."""
+    return typer.Option(False, "--json", help=JSON_HELP)
+
+
+def _all_option(typer):
+    """Shared --all option for query/doctor/lookup commands."""
+    return typer.Option(False, "--all", help="Show all matches")
+
+
+def _longer_option(typer):
+    """Shared --longer option for query/doctor/lookup commands."""
+    return typer.Option(
+        False,
+        "--longer",
+        help="Include more-specific prefixes contained by the query",
+    )
+
+
+def _rdap_method_option(typer):
+    """Shared --rdap-method option for doctor/lookup commands."""
+    return typer.Option(
+        RdapMethod.RDAP_ORG,
+        "--rdap-method",
+        help="RDAP lookup method: rdap.org (default) or iana-bootstrap",
+    )
+
+
 class DumpFormat(StrEnum):
     """Supported output formats for the dump command."""
 
@@ -149,13 +182,7 @@ def _register_dump_command(app, typer) -> None:
             "--no-validation",
             help="Skip per-record validation annotations in JSON or table output",
         ),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Dump geofeed records as JSON, geofeed CSV, or a table."""
         configure_cli_structlog(verbose)
@@ -202,11 +229,7 @@ def _register_validate_command(app, typer) -> None:
     @app.command("validate")
     def validate_command(
         source: str,
-        json_output: bool = typer.Option(
-            False,
-            "--json",
-            help=JSON_HELP,
-        ),
+        json_output: bool = _json_option(typer),
         strict: bool = typer.Option(
             False,
             "--strict",
@@ -227,13 +250,7 @@ def _register_validate_command(app, typer) -> None:
             "--no-content-type-check",
             help="Disable content-type warnings for URL sources",
         ),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Validate a geofeed source and report issues."""
         configure_cli_structlog(verbose)
@@ -271,13 +288,7 @@ def _register_normalize_command(app, typer) -> None:
         no_aggregate: bool = typer.Option(False, "--no-aggregate"),
         no_dedupe: bool = typer.Option(False, "--no-dedupe"),
         no_host_bit_fix: bool = typer.Option(False, "--no-host-bit-fix"),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Normalize geofeed records and print or write canonical CSV."""
         configure_cli_structlog(verbose)
@@ -305,20 +316,10 @@ def _register_query_command(app, typer) -> None:
     def query_command(
         source: str,
         query: str,
-        show_all: bool = typer.Option(False, "--all", help="Show all matches"),
-        include_longer: bool = typer.Option(
-            False,
-            "--longer",
-            help="Include more-specific prefixes contained by the query",
-        ),
-        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        show_all: bool = _all_option(typer),
+        include_longer: bool = _longer_option(typer),
+        json_output: bool = _json_option(typer),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Query a geofeed by IP or prefix."""
         configure_cli_structlog(verbose)
@@ -348,25 +349,11 @@ def _register_doctor_command(app, typer) -> None:
     @app.command("doctor")
     def doctor_command(
         query: str,
-        show_all: bool = typer.Option(False, "--all", help="Show all matches"),
-        include_longer: bool = typer.Option(
-            False,
-            "--longer",
-            help="Include more-specific prefixes contained by the query",
-        ),
-        rdap_method: RdapMethod = typer.Option(
-            RdapMethod.RDAP_ORG,
-            "--rdap-method",
-            help="RDAP lookup method: rdap.org (default) or iana-bootstrap",
-        ),
-        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        show_all: bool = _all_option(typer),
+        include_longer: bool = _longer_option(typer),
+        rdap_method: RdapMethod = _rdap_method_option(typer),
+        json_output: bool = _json_option(typer),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Discover and query a published geofeed by IP or prefix."""
         configure_cli_structlog(verbose)
@@ -392,25 +379,11 @@ def _register_lookup_command(app, typer) -> None:
     @app.command("lookup")
     def lookup_command(
         query: str,
-        show_all: bool = typer.Option(False, "--all", help="Show all matches"),
-        include_longer: bool = typer.Option(
-            False,
-            "--longer",
-            help="Include more-specific prefixes contained by the query",
-        ),
-        rdap_method: RdapMethod = typer.Option(
-            RdapMethod.RDAP_ORG,
-            "--rdap-method",
-            help="RDAP lookup method: rdap.org (default) or iana-bootstrap",
-        ),
-        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        show_all: bool = _all_option(typer),
+        include_longer: bool = _longer_option(typer),
+        rdap_method: RdapMethod = _rdap_method_option(typer),
+        json_output: bool = _json_option(typer),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Discover a published geofeed via RDAP and query it by IP or prefix."""
         configure_cli_structlog(verbose)
@@ -443,14 +416,8 @@ def _register_info_command(app, typer) -> None:
     @app.command("info")
     def info_command(
         source: str,
-        json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        json_output: bool = _json_option(typer),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Show geofeed statistics."""
         from tabulate import tabulate
@@ -520,13 +487,7 @@ def _register_hook_command(app, typer) -> None:
             "--show-issues/--no-issues",
             help="Print individual validation issues",
         ),
-        verbose: int = typer.Option(
-            0,
-            "-v",
-            "--verbose",
-            count=True,
-            help=VERBOSE_HELP,
-        ),
+        verbose: int = _verbose_option(typer),
     ) -> None:
         """Run validation and return hook-friendly exit codes."""
         configure_cli_structlog(verbose)

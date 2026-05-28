@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import collections
-import csv
-import ipaddress
 
+from ._net_utils import Network
 from .config import TRACE_LEVEL
 from .logging import logger
 from .models import GeofeedRecord
-from .parsing import iter_data_lines, normalize_fields, parse_record
+from .parsing import iter_records
 from .validate import validate_bytes
-
-Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
 def parse_text(text: str) -> list[GeofeedRecord]:
@@ -40,41 +37,36 @@ def _parse_text_impl(
     networks: list[Network | None] | None = [] if include_networks else None
     skipped_csv_errors = 0
     skipped_missing_prefix = 0
-    for lineno, data in iter_data_lines(text):
-        try:
-            fields = parse_record(data)
-        except csv.Error as exc:
+    for line in iter_records(text, strict=False):
+        if line.csv_error is not None:
             skipped_csv_errors += 1
             logger.log(
                 TRACE_LEVEL,
                 "Skipping geofeed line during parse due to CSV error: line=%d error=%s",
-                lineno,
-                exc,
+                line.lineno,
+                line.csv_error,
             )
             continue
-        prefix, country, region, city, postal = normalize_fields(fields)
-        if not prefix:
+        if not line.prefix:
             skipped_missing_prefix += 1
             logger.log(
                 TRACE_LEVEL,
                 "Skipping geofeed line during parse due to missing prefix: line=%d",
-                lineno,
+                line.lineno,
             )
             continue
-        record = GeofeedRecord(
-            prefix=prefix,
-            country=country,
-            region=region,
-            city=city,
-            postal_code=postal,
-            line=lineno,
+        records.append(
+            GeofeedRecord(
+                prefix=line.prefix,
+                country=line.country,
+                region=line.region,
+                city=line.city,
+                postal_code=line.postal,
+                line=line.lineno,
+            )
         )
-        records.append(record)
         if networks is not None:
-            try:
-                networks.append(ipaddress.ip_network(prefix, strict=False))
-            except ValueError:
-                networks.append(None)
+            networks.append(line.network)
     logger.debug(
         "Parsed raw geofeed text into records: records=%d skipped_csv_errors=%d skipped_missing_prefix=%d",
         len(records),

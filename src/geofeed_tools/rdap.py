@@ -56,6 +56,11 @@ class ResolvedRdapLookup:
 class _LookupTraversalState:
     """Mutable RDAP traversal state shared by sync and async lookup flows."""
 
+    lookup_strategy: str
+    rdap_method: str
+    rdap_query: str
+    bootstrap_url: str
+    bootstrap_source_url: str | None
     resolved_urls: list[str] = field(default_factory=list)
     seen_urls: set[str] = field(default_factory=set)
     default_handle: str | None = None
@@ -69,6 +74,37 @@ class _LookupTraversalState:
     referring_range: str | None = None
     range_start: IPAddress | None = None
     range_end: IPAddress | None = None
+
+    def finalize(self) -> ResolvedRdapLookup:
+        """Build the final resolved RDAP lookup object from traversal state."""
+        referring_handle = self.referring_handle
+        referring_range = self.referring_range
+        range_start = self.range_start
+        range_end = self.range_end
+        if self.geofeed_url is None:
+            referring_handle = self.default_handle
+            referring_range = self.default_range
+            range_start = self.default_start
+            range_end = self.default_end
+
+        lookup = DoctorLookup(
+            lookup_strategy=self.lookup_strategy,
+            rdap_method=self.rdap_method,
+            rdap_query=self.rdap_query,
+            bootstrap_url=self.bootstrap_url,
+            bootstrap_source_url=self.bootstrap_source_url,
+            resolved_urls=tuple(self.resolved_urls),
+            referring_handle=referring_handle,
+            referring_range=referring_range,
+            geofeed_url=self.geofeed_url,
+            geofeed_discovered_via=self.geofeed_discovered_via,
+            geofeed_reference_url=self.geofeed_reference_url,
+        )
+        return ResolvedRdapLookup(
+            lookup=lookup,
+            range_start=range_start,
+            range_end=range_end,
+        )
 
 
 def _string(value: object) -> str | None:
@@ -528,46 +564,6 @@ def _apply_rdap_payload(
     return _extract_parent_url(payload, resolved_url)
 
 
-def _finalize_resolved_lookup(
-    *,
-    lookup_strategy: str,
-    rdap_method: str,
-    rdap_query: str,
-    bootstrap_url: str,
-    bootstrap_source_url: str | None,
-    state: _LookupTraversalState,
-) -> ResolvedRdapLookup:
-    """Build the final resolved RDAP lookup object from traversal state."""
-    referring_handle = state.referring_handle
-    referring_range = state.referring_range
-    range_start = state.range_start
-    range_end = state.range_end
-    if state.geofeed_url is None:
-        referring_handle = state.default_handle
-        referring_range = state.default_range
-        range_start = state.default_start
-        range_end = state.default_end
-
-    lookup = DoctorLookup(
-        lookup_strategy=lookup_strategy,
-        rdap_method=rdap_method,
-        rdap_query=rdap_query,
-        bootstrap_url=bootstrap_url,
-        bootstrap_source_url=bootstrap_source_url,
-        resolved_urls=tuple(state.resolved_urls),
-        referring_handle=referring_handle,
-        referring_range=referring_range,
-        geofeed_url=state.geofeed_url,
-        geofeed_discovered_via=state.geofeed_discovered_via,
-        geofeed_reference_url=state.geofeed_reference_url,
-    )
-    return ResolvedRdapLookup(
-        lookup=lookup,
-        range_start=range_start,
-        range_end=range_end,
-    )
-
-
 def resolve_geofeed_lookup(
     query: str,
     *,
@@ -579,7 +575,13 @@ def resolve_geofeed_lookup(
         rdap_query,
         rdap_method=rdap_method,
     )
-    state = _LookupTraversalState()
+    state = _LookupTraversalState(
+        lookup_strategy=lookup_strategy,
+        rdap_method=rdap_method,
+        rdap_query=rdap_query,
+        bootstrap_url=bootstrap_url,
+        bootstrap_source_url=bootstrap_source_url,
+    )
     current_url: str | None = bootstrap_url
 
     while current_url is not None and len(state.resolved_urls) < MAX_RDAP_DEPTH:
@@ -595,14 +597,7 @@ def resolve_geofeed_lookup(
         if state.geofeed_url is not None:
             break
 
-    return _finalize_resolved_lookup(
-        lookup_strategy=lookup_strategy,
-        rdap_method=rdap_method,
-        rdap_query=rdap_query,
-        bootstrap_url=bootstrap_url,
-        bootstrap_source_url=bootstrap_source_url,
-        state=state,
-    )
+    return state.finalize()
 
 
 async def resolve_geofeed_lookup_async(
@@ -616,7 +611,13 @@ async def resolve_geofeed_lookup_async(
         rdap_query,
         rdap_method=rdap_method,
     )
-    state = _LookupTraversalState()
+    state = _LookupTraversalState(
+        lookup_strategy=lookup_strategy,
+        rdap_method=rdap_method,
+        rdap_query=rdap_query,
+        bootstrap_url=bootstrap_url,
+        bootstrap_source_url=bootstrap_source_url,
+    )
     current_url: str | None = bootstrap_url
 
     while current_url is not None and len(state.resolved_urls) < MAX_RDAP_DEPTH:
@@ -632,14 +633,7 @@ async def resolve_geofeed_lookup_async(
         if state.geofeed_url is not None:
             break
 
-    return _finalize_resolved_lookup(
-        lookup_strategy=lookup_strategy,
-        rdap_method=rdap_method,
-        rdap_query=rdap_query,
-        bootstrap_url=bootstrap_url,
-        bootstrap_source_url=bootstrap_source_url,
-        state=state,
-    )
+    return state.finalize()
 
 
 __all__ = [

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 
+from ._net_utils import Network
 from .logging import logger
 from .models import GeoFeedInfo, GeofeedRecord, ValidationReport
 
@@ -13,7 +14,7 @@ def build_info(
     records: list[GeofeedRecord],
     report: ValidationReport | None = None,
     *,
-    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network | None] | None = None,
+    networks: list[Network | None] | None = None,
 ) -> GeoFeedInfo:
     """Build aggregate geofeed statistics from records and validation."""
     logger.debug(
@@ -22,24 +23,25 @@ def build_info(
         len(records),
         report is not None,
     )
-    unique_prefixes = {record.prefix for record in records}
+    if networks is None:
+        networks = [None] * len(records)
+    assert len(networks) == len(records)
 
+    unique_prefixes = {record.prefix for record in records}
     ipv4 = 0
     ipv6 = 0
-    countries = set()
-    regions = set()
-    cities = set()
-    postals = set()
+    countries: set[str] = set()
+    regions: set[str] = set()
+    cities: set[str] = set()
+    postals: set[str] = set()
 
-    for index, record in enumerate(records):
-        network = None if networks is None else networks[index]
+    for record, network in zip(records, networks, strict=True):
         if network is None:
             network = ipaddress.ip_network(record.prefix, strict=False)
         if network.version == 4:
             ipv4 += 1
         else:
             ipv6 += 1
-
         if record.country:
             countries.add(record.country)
         if record.region:
