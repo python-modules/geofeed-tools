@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TypeVar
 
-from ._query_cache import QueryIndex, QueryIndexCache
+from ._net_utils import Network
+from ._query_cache import ParsedRecordsCache, QueryIndex, QueryIndexCache
 from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .doctor import doctor_query, render_doctor_text
-from .filtering import filter_records
+from .filtering import filter_parsed
 from .info import DEFAULT_TOP_N, build_info
+from .info_render import render_info_grep, render_info_text
 from .io_utils import (
     doctor_to_json,
     info_to_json,
@@ -29,7 +31,7 @@ from .models import (
     ValidationReport,
 )
 from .normalize import normalize_records
-from .parse import annotate_validity, parse_text, parse_text_with_networks
+from .parse import annotate_validity, parse_text_with_networks
 from .query import load_query_records, query_text
 from .validate import render_validation_text, validate_bytes
 
@@ -67,6 +69,8 @@ _DOCTOR_SERIALIZERS: Mapping[str, Callable[[DoctorResult], str]] = {
 
 _INFO_SERIALIZERS: Mapping[str, Callable[[GeoFeedInfo], str]] = {
     "json": info_to_json,
+    "text": render_info_text,
+    "grep": render_info_grep,
 }
 
 
@@ -108,40 +112,22 @@ def _build_lookup_result(result: DoctorResult) -> QueryResult:
     return QueryResult(query=result.query, matches=result.matches)
 
 
-def _build_parsed_records(
-    source: str,
-    raw: bytes,
-    text: str,
-    content_type: str | None,
-    *,
-    include_validation: bool,
-    normalize: bool,
-) -> list[GeofeedRecord]:
-    records = normalize_records(text) if normalize else parse_text(text)
-    if include_validation:
-        records = annotate_validity(records, source=source, raw=raw, content_type=content_type)
-    return records
-
-
 def _parse_loaded(
     source: str,
     raw: bytes,
     text: str,
     content_type: str | None,
+    records: list[GeofeedRecord],
     *,
     include_validation: bool = True,
     normalize: bool = False,
     output: str = "objects",
 ) -> list[GeofeedRecord] | str:
     logger.info("Parsing geofeed records from %s source: %s", source_kind(source), source)
-    records = _build_parsed_records(
-        source,
-        raw,
-        text,
-        content_type,
-        include_validation=include_validation,
-        normalize=normalize,
-    )
+    if normalize:
+        records = normalize_records(text)
+    if include_validation:
+        records = annotate_validity(records, source=source, raw=raw, content_type=content_type)
     return _emit(
         records,
         output=output,
@@ -182,7 +168,8 @@ def _validate_loaded(
 
 def _filter_loaded(
     source: str,
-    text: str,
+    records: list[GeofeedRecord],
+    networks: list[Network | None],
     *,
     prefix: str | None = None,
     country: str | None = None,
@@ -195,8 +182,9 @@ def _filter_loaded(
     output: str = "objects",
 ) -> list[GeofeedRecord] | str:
     logger.info("Filtering geofeed source: %s", source)
-    records = filter_records(
-        text,
+    filtered = filter_parsed(
+        records,
+        networks,
         prefix=prefix,
         country=country,
         region=region,
@@ -207,10 +195,10 @@ def _filter_loaded(
         include_longer=include_longer,
     )
     return _emit(
-        records,
+        filtered,
         output=output,
         serializers=_records_serializers(include_validation=False),
-        summary=f"Filter completed: source={source} records={len(records)}",
+        summary=f"Filter completed: source={source} records={len(filtered)}",
     )
 
 
@@ -271,16 +259,16 @@ def _query_loaded(
 def _info_loaded(
     source: str,
     raw: bytes,
-    text: str,
     content_type: str | None,
+    records: list[GeofeedRecord],
+    networks: list[Network | None],
     *,
     top_n: int = DEFAULT_TOP_N,
     output: str = "objects",
 ) -> GeoFeedInfo | str:
     logger.info("Computing geofeed info: %s", source)
-    records, networks = parse_text_with_networks(text)
     report = validate_bytes(raw, source, content_type)
-    info = build_info(source, records, networks, report, text=text, top_n=top_n)
+    info = build_info(source, records, networks, report, top_n=top_n)
     return _emit(
         info,
         output=output,
@@ -338,15 +326,17 @@ class _GeoFeedBase:
         self.content_type: str | None = None
         self.text: str | None = None
         self._query_index_state = QueryIndexCache(enabled=cache_query_index)
+        self._parsed_state = ParsedRecordsCache(enabled=True)
 
     def _update_loaded_content(self, raw: bytes, content_type: str | None) -> str:
-        """Store loaded bytes, decode text, and invalidate the query index cache."""
+        """Store loaded bytes, decode text, and invalidate caches for the new content."""
         self.raw = raw
         self.content_type = content_type
         # Parser and normalizer behavior strips UTF-8 BOM before processing.
         text = decode_text(raw, strip_bom=True)
         self.text = text
         self._query_index_state.invalidate()
+        self._parsed_state.invalidate()
         return text
 
     def _get_cached_query_index(self) -> QueryIndex | None:
@@ -354,6 +344,14 @@ class _GeoFeedBase:
 
     def _store_query_index(self, index: QueryIndex) -> QueryIndex:
         return self._query_index_state.store(index)
+
+    def _get_or_parse(self) -> tuple[list[GeofeedRecord], list[Network | None]]:
+        """Return cached parsed records/networks, or parse and cache them."""
+        assert self.text is not None
+        cached = self._parsed_state.get_cached()
+        if cached is not None:
+            return cached
+        return self._parsed_state.store(parse_text_with_networks(self.text))
 
     # ------------------------------------------------------------------
     # CPU-bound work methods — called after loading; safe for to_thread.
@@ -368,11 +366,13 @@ class _GeoFeedBase:
     ) -> list[GeofeedRecord] | str:
         assert self.raw is not None
         assert self.text is not None
+        records, _networks = self._get_or_parse()
         return _parse_loaded(
             self.source,
             self.raw,
             self.text,
             self.content_type,
+            records,
             include_validation=include_validation,
             normalize=normalize,
             output=output,
@@ -411,9 +411,11 @@ class _GeoFeedBase:
         output: str = "objects",
     ) -> list[GeofeedRecord] | str:
         assert self.text is not None
+        records, networks = self._get_or_parse()
         return _filter_loaded(
             self.source,
-            self.text,
+            records,
+            networks,
             prefix=prefix,
             country=country,
             region=region,
@@ -477,11 +479,13 @@ class _GeoFeedBase:
     ) -> GeoFeedInfo | str:
         assert self.raw is not None
         assert self.text is not None
+        records, networks = self._get_or_parse()
         return _info_loaded(
             self.source,
             self.raw,
-            self.text,
             self.content_type,
+            records,
+            networks,
             top_n=top_n,
             output=output,
         )

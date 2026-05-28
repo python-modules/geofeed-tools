@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import collections
 import ipaddress
+from typing import cast
 
-from ._net_utils import Network
+from ._net_utils import Network, collapse_same_version
 from .logging import logger
 from .models import (
     CountryStatistics,
@@ -19,7 +20,6 @@ from .models import (
     NormalizationPreview,
     ValidationReport,
 )
-from .normalize import normalize_records
 
 DEFAULT_TOP_N = 20
 
@@ -34,23 +34,22 @@ def build_info(
     networks: list[Network | None] | None = None,
     report: ValidationReport | None = None,
     *,
-    text: str | None = None,
     top_n: int = DEFAULT_TOP_N,
 ) -> GeoFeedInfo:
     """Build a detailed GeoFeedInfo from parsed records and optional validation.
 
-    Pass ``networks`` (the second value from ``parse_text_with_networks``) when
-    available to avoid re-parsing each prefix. Pass ``text`` to enable the
-    ``normalized`` preview — without it, the preview is omitted.
+    Pass ``networks`` (the second value from ``parse_text_with_networks``) to
+    enable the ``normalized`` preview and to skip the per-record CIDR re-parse.
     """
     logger.debug(
         "Building geofeed info: source=%s records=%d top_n=%d normalize_preview=%s",
         source,
         len(records),
         top_n,
-        text is not None,
+        networks is not None,
     )
 
+    have_networks = networks is not None
     if networks is None:
         networks = [None] * len(records)
     assert len(networks) == len(records)
@@ -132,7 +131,7 @@ def build_info(
         )
     )
 
-    normalized_preview = _build_normalized_preview(text, records) if text is not None else None
+    normalized_preview = _build_normalized_preview(records, networks) if have_networks else None
 
     info = GeoFeedInfo(
         source=source,
@@ -167,32 +166,47 @@ def build_info(
     return info
 
 
-def _build_normalized_preview(text: str, records: list[GeofeedRecord]) -> NormalizationPreview:
-    """Run two normalize passes to compute the preview deltas."""
-    # Pass 1: validity-only filter (no aggregation/dedupe) so we can measure
-    # how many input rows survive strict CIDR parsing with host-bit fix.
-    valid_only = normalize_records(text, aggregate=False, dedupe=False)
-    # Pass 2: full normalize with aggregation + dedupe enabled (default).
-    full = normalize_records(text)
+def _build_normalized_preview(
+    records: list[GeofeedRecord],
+    networks: list[Network | None],
+) -> NormalizationPreview:
+    """Compute the normalize preview from in-memory parse output.
 
-    addresses_v4 = 0
-    addresses_v6 = 0
-    prefixes_v4 = 0
-    prefixes_v6 = 0
-    for record in full:
-        try:
-            network = ipaddress.ip_network(record.prefix, strict=False)
-        except ValueError:
+    Mirrors the default ``normalize_records()`` behavior (uppercase + aggregate
+    + dedupe + host-bit fix) without re-parsing the source text.
+    """
+    # Group unique networks by (version, uppercased country/region, city, postal)
+    # to match the default aggregation key used by ``normalize_records``.
+    by_key: dict[tuple[int, str, str, str, str], set[Network]] = collections.defaultdict(set)
+    valid_only_count = 0
+    for record, network in zip(records, networks, strict=True):
+        if network is None:
             continue
-        if network.version == 4:
-            prefixes_v4 += 1
-            addresses_v4 += network.num_addresses
-        else:
-            prefixes_v6 += 1
-            addresses_v6 += network.num_addresses
+        valid_only_count += 1
+        country = record.country.upper() if record.country else ""
+        region = record.region.upper() if record.region else ""
+        key = (network.version, country, region, record.city, record.postal_code)
+        by_key[key].add(network)
 
-    invalid_removed = max(0, len(records) - len(valid_only))
-    aggregated = max(0, len(valid_only) - len(full))
+    aggregated_v4: list[ipaddress.IPv4Network] = []
+    aggregated_v6: list[ipaddress.IPv6Network] = []
+    for (version, _country, _region, _city, _postal), unique_networks in by_key.items():
+        if version == 4:
+            aggregated_v4.extend(
+                collapse_same_version([cast(ipaddress.IPv4Network, n) for n in unique_networks])
+            )
+        else:
+            aggregated_v6.extend(
+                collapse_same_version([cast(ipaddress.IPv6Network, n) for n in unique_networks])
+            )
+
+    addresses_v4 = sum(n.num_addresses for n in aggregated_v4)
+    addresses_v6 = sum(n.num_addresses for n in aggregated_v6)
+    prefixes_v4 = len(aggregated_v4)
+    prefixes_v6 = len(aggregated_v6)
+
+    invalid_removed = max(0, len(records) - valid_only_count)
+    aggregated = max(0, valid_only_count - (prefixes_v4 + prefixes_v6))
 
     return NormalizationPreview(
         prefixes_total=prefixes_v4 + prefixes_v6,

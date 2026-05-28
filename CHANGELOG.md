@@ -10,6 +10,8 @@
 - Update info command to provide actual useful information and statistics
 - Default to showing help message without args/command provided
 - Add filter API/CLI command
+- Fix caching across subsequent method calls
+- Split renderer for readability
 
 ## 2026-05-26 - 0.1.2
 

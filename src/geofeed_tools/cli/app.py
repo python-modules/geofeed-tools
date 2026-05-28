@@ -124,6 +124,11 @@ def _rdap_method_option(typer):
     )
 
 
+def _strict_option(typer, *, help_text: str):
+    """Shared --strict option for validate/hook commands."""
+    return typer.Option(False, "--strict", help=help_text)
+
+
 def build_app():
     """Build and return the Typer application."""
     import typer as _typer
@@ -186,11 +191,7 @@ def _register_validate_command(app, typer) -> None:
     def validate_command(
         source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
-        strict: bool = typer.Option(
-            False,
-            "--strict",
-            help="Fail on warnings as well as errors",
-        ),
+        strict: bool = _strict_option(typer, help_text="Fail on warnings as well as errors"),
         check_aggregation: bool = typer.Option(
             False,
             "--check-aggregation",
@@ -499,11 +500,7 @@ def _register_hook_command(app, typer) -> None:
     def hook_command(
         source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
-        strict: bool = typer.Option(
-            False,
-            "--strict",
-            help="Fail when warnings are present",
-        ),
+        strict: bool = _strict_option(typer, help_text="Fail when warnings are present"),
         show_issues: bool = typer.Option(
             True,
             "--show-issues/--no-issues",

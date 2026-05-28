@@ -42,7 +42,40 @@ def filter_records(
     prefix_length: int | None = None,
     include_longer: bool = False,
 ) -> list[GeofeedRecord]:
-    """Return records that match every supplied filter (logical AND).
+    """Return records from ``text`` that match every supplied filter.
+
+    Thin wrapper around :func:`filter_parsed` that parses ``text`` first; use
+    :func:`filter_parsed` directly when the caller already has the parse output.
+    """
+    records, networks = parse_text_with_networks(text)
+    return filter_parsed(
+        records,
+        networks,
+        prefix=prefix,
+        country=country,
+        region=region,
+        city=city,
+        postal_code=postal_code,
+        family=family,
+        prefix_length=prefix_length,
+        include_longer=include_longer,
+    )
+
+
+def filter_parsed(
+    records: list[GeofeedRecord],
+    networks: list[Network | None],
+    *,
+    prefix: str | None = None,
+    country: str | None = None,
+    region: str | None = None,
+    city: str | None = None,
+    postal_code: str | None = None,
+    family: str | int | None = None,
+    prefix_length: int | None = None,
+    include_longer: bool = False,
+) -> list[GeofeedRecord]:
+    """Filter already-parsed records by one or more predicates (logical AND).
 
     With ``include_longer=False`` (default), ``prefix`` matches the exact
     network and ``prefix_length`` matches the exact length. With
@@ -74,7 +107,6 @@ def filter_records(
         include_longer,
     )
 
-    records, networks = parse_text_with_networks(text)
     out: list[GeofeedRecord] = []
     for record, network in zip(records, networks, strict=True):
         if network is None:
@@ -112,4 +144,4 @@ def filter_records(
     return out
 
 
-__all__ = ["filter_records", "parse_family"]
+__all__ = ["filter_parsed", "filter_records", "parse_family"]
