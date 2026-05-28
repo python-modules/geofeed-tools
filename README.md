@@ -1,27 +1,26 @@
 # geofeed-tools
 
-`geofeed-tools` is a Python library and CLI for working with RFC 8805 geofeeds. It supports parsing, validation, normalization, querying, and summary reporting for local files and remote HTTP(S) sources.
+`geofeed-tools` is a Python library and CLI for working with [RFC 8805](https://datatracker.ietf.org/doc/html/rfc8805) geofeeds. It parses, validates, normalizes, queries, and summarizes geofeeds from local files and HTTP(S) sources, and discovers published geofeeds for an IP/prefix via RDAP.
 
 - [geofeed-tools](#geofeed-tools)
-  - [Basic Overview](#basic-overview)
-  - [Installation](#installation)
-    - [uv](#uv)
-    - [Docker](#docker)
+  - [Install](#install)
+  - [CLI quick start](#cli-quick-start)
+  - [Output formats](#output-formats)
+  - [CLI command reference](#cli-command-reference)
+    - [`validate`](#validate)
+    - [`dump`](#dump)
+    - [`normalize`](#normalize)
+    - [`query`](#query)
+    - [`doctor`](#doctor)
+    - [`lookup`](#lookup)
+    - [`info`](#info)
+    - [`hook`](#hook)
   - [Python API](#python-api)
-    - [Quick Start](#quick-start)
-    - [Public Imports](#public-imports)
-    - [`AsyncGeoFeed`](#asyncgeofeed)
-    - [`GeoFeed`](#geofeed)
-      - [Constructor](#constructor)
-      - [`reload()`](#reload)
-      - [`parse()`](#parse)
-      - [`validate()`](#validate)
-      - [`normalize()`](#normalize)
-      - [`query()`](#query)
-      - [`doctor()`](#doctor)
-      - [`lookup()`](#lookup)
-      - [`info()`](#info)
-    - [Public Data Models](#public-data-models)
+    - [Python API quick start](#python-api-quick-start)
+    - [`GeoFeed` class](#geofeed-class)
+    - [`AsyncGeoFeed` class](#asyncgeofeed-class)
+    - [Static helpers (`doctor` / `lookup`)](#static-helpers-doctor--lookup)
+    - [Data models](#data-models)
       - [`GeofeedRecord`](#geofeedrecord)
       - [`ValidationIssue`](#validationissue)
       - [`ValidationReport`](#validationreport)
@@ -29,990 +28,425 @@
       - [`DoctorLookup`](#doctorlookup)
       - [`DoctorResult`](#doctorresult)
       - [`GeoFeedInfo`](#geofeedinfo)
-    - [Error Handling](#error-handling)
-  - [CLI Usage](#cli-usage)
-    - [Quick Start](#quick-start-1)
-    - [Common CLI Behavior](#common-cli-behavior)
-    - [Command Reference](#command-reference)
-      - [`validate`](#validate-1)
-      - [`dump`](#dump)
-      - [`normalize`](#normalize-1)
-      - [`query`](#query-1)
-      - [`doctor`](#doctor-1)
-      - [`lookup`](#lookup-1)
-      - [`info`](#info-1)
-      - [`hook`](#hook)
-    - [GitHub Actions Integration](#github-actions-integration)
-      - [How To Use It In Another Repository](#how-to-use-it-in-another-repository)
+    - [Error handling](#error-handling)
+  - [GitHub Actions integration](#github-actions-integration)
   - [Testing](#testing)
-    - [HTML test reports](#html-test-reports)
-    - [Test Notes](#test-notes)
   - [Configuration](#configuration)
 
-## Basic Overview
-
-- Validate geofeed quality and RFC 8805 compliance
-- Normalize records - ensure there are no duplicates, invalid prefixes (eg. host bits set), case is correct
-- Query geofeeds by searching for IPs or prefixes
-- Discover published geofeeds for an IP or prefix via RDAP and query the discovered feed
-- Use as either a Python API or a CLI
-- CLI hook command available for use in version control hooks or CI/CD tests
-
-## Installation
-
-To install the core library with only the API available:
+## Install
 
 ```bash
-python3 -m pip install geofeed-tools
+# Core library only
+pip install geofeed-tools
+
+# Library + CLI
+pip install 'geofeed-tools[cli]'
+
+# Library + async HTTP support for AsyncGeoFeed URL loading
+pip install 'geofeed-tools[async]'
+
+# Library + everything for development
+pip install 'geofeed-tools[dev]'
 ```
 
-To install the full library including the CLI:
-
-```bash
-python3 -m pip 'geofeed-tools[cli]'
-```
-
-To install the library with async HTTP support for `AsyncGeoFeed` URL loading:
-
-```bash
-python3 -m pip 'geofeed-tools[async]'
-```
-
-Install development dependencies:
-
-```bash
-python3 -m pip install 'geofeed-tools[dev]'
-```
-
-### uv
-
-To run the CLI with `uv` directly:
+Run the CLI under `uv` without installing:
 
 ```bash
 uv tool run 'geofeed-tools[cli]' --help
 ```
 
-### Docker
-
-If Docker is available, you can run the CLI without installing Python or package dependencies on the host.
-
-Published images:
-
-- GHCR: `ghcr.io/python-modules/geofeed-tools`
-- Docker Hub: `pythonmodules/geofeed-tools`
-- Floating tags: `python3`, `python3.11`, `python3.12`, `python3.13`
-- `latest` tracks the `python3` build
-
-The containers entry point is the CLI; run by simpling providing the command/arguments. As an example:
+Or via Docker (no Python needed on the host):
 
 ```bash
-docker run --rm pythonmodules/geofeed-tools:latest doctor 192.0.2.0
+docker run --rm pythonmodules/geofeed-tools:latest doctor 31.133.128.1
 ```
+
+Published images:
+  - `ghcr.io/python-modules/geofeed-tools`
+  - `pythonmodules/geofeed-tools`
+
+Tags: `python3`, `python3.11`, `python3.12`, `python3.13`, and `latest` (tracks `python3`).
+
+## CLI quick start
+
+```bash
+# Discover a published geofeed for an IP via RDAP and show matches
+geofeed-tools doctor 31.133.128.1
+
+# Validate a geofeed source
+geofeed-tools validate geofeeds.csv
+
+# Show summary statistics
+geofeed-tools info geofeeds.csv
+
+# Query a geofeed for an IP or prefix
+geofeed-tools query geofeeds.csv 192.0.2.200
+
+# Normalize the feed and write canonical CSV to a file
+geofeed-tools normalize geofeeds.csv --output normalized.csv
+
+# Validate in CI / pre-commit mode (machine-friendly exit codes)
+geofeed-tools hook geofeeds.csv --strict
+```
+
+Per-command help is always available:
+
+```bash
+geofeed-tools --help
+geofeed-tools doctor --help
+```
+
+## Output formats
+
+Every command supports `--format` / `-f` with four values:
+
+| Format  | Best for                          | Notes                                                                 |
+| ------- | --------------------------------- | --------------------------------------------------------------------- |
+| `rich`  | terminal (default)                | Colored panels, trees, and tables                                     |
+| `plain` | redirected to file or scrollback  | Same content, no colors, no box-drawing characters                    |
+| `grep`  | piping to `grep`/`awk`/scripting  | One record per line, no headers or summary lines                      |
+| `json`  | piping to `jq` or programmatic    | Stable structured JSON identical to the matching `output="json"` API  |
+
+Examples:
+
+```bash
+geofeed-tools validate geofeeds.csv --format grep | grep error
+geofeed-tools info geofeeds.csv --format grep | grep ^errors=
+geofeed-tools doctor 31.133.128.1 --format json | jq .lookup.geofeed_url
+geofeed-tools query geofeeds.csv 192.0.2.1 --format json | jq '.matches[0]'
+```
+
+Exit codes follow the most useful semantic per format:
+
+- `validate` / `hook`: exit 1 when errors are found (or warnings with `--strict`), regardless of format.
+- `query` / `lookup`: exit 1 on no match in any non-JSON format; exit 0 in `json` mode (the empty `matches` array is the answer). `lookup` always exits 1 when no geofeed is discovered.
+- `doctor`: exit 1 when no geofeed is discovered or no record matches, regardless of format.
+- `dump` / `normalize` / `info`: exit 0 on success.
+
+## CLI command reference
+
+### `validate`
+
+```bash
+geofeed-tools validate SOURCE [--format ...] [--strict] [--check-aggregation] [--no-sort-check] [--no-content-type-check] [-v]
+```
+
+Validate a geofeed and report issues.
+
+| Option                    | Default | Meaning                                                          |
+| ------------------------- | ------- | ---------------------------------------------------------------- |
+| `--format`, `-f`          | `rich`  | Output format.                                                   |
+| `--strict`                | off     | Exit 1 when warnings are present, not just errors.               |
+| `--check-aggregation`     | off     | Warn for prefixes that could be safely aggregated.               |
+| `--no-sort-check`         | off     | Disable sort-order warnings.                                     |
+| `--no-content-type-check` | off     | Disable `Content-Type` warnings for URL sources.                 |
+| `-v`, `--verbose`         | `0`     | Increase log verbosity (`-v` INFO, `-vv` DEBUG, `-vvv` TRACE).   |
+
+`--format grep` emits one line per issue in `path:line:severity:code:message` form, identical to GCC/grep style for easy pipeline use.
+
+### `dump`
+
+```bash
+geofeed-tools dump SOURCE [--format ...] [--normalize] [--no-validation] [-v]
+```
+
+Dump parsed records in the chosen format. `--normalize` rebuilds rows from normalized output; `--no-validation` strips the `valid` / `validation_messages` columns from rich, plain, and JSON output. The `grep` format always emits 5-column geofeed CSV without validation columns.
+
+### `normalize`
+
+```bash
+geofeed-tools normalize SOURCE [--format ...] [--output FILE] [--no-uppercase] [--no-sort] [--no-aggregate] [--no-dedupe] [--no-host-bit-fix] [-v]
+```
+
+Normalize a geofeed. `--output FILE` always writes canonical CSV regardless of `--format` because that is the only useful payload to persist.
+
+| Option              | Default | Meaning                                                                  |
+| ------------------- | ------- | ------------------------------------------------------------------------ |
+| `--no-uppercase`    | off     | Do not uppercase country and region fields.                              |
+| `--no-sort`         | off     | Do not sort by IP family and prefix.                                     |
+| `--no-aggregate`    | off     | Do not collapse compatible prefixes into larger prefixes.                |
+| `--no-dedupe`       | off     | Do not remove exact duplicate rows when aggregation is disabled.         |
+| `--no-host-bit-fix` | off     | Do not coerce prefixes with host bits set to their containing network.   |
+
+### `query`
+
+```bash
+geofeed-tools query SOURCE QUERY [--format ...] [--all] [--longer] [-v]
+```
+
+Look up an IP or CIDR. `--all` returns every match instead of only the most specific one; `--longer` includes more-specific prefixes contained by a queried prefix.
+
+### `doctor`
+
+```bash
+geofeed-tools doctor QUERY [--format ...] [--all] [--longer] [--rdap-method rdap.org|iana-bootstrap] [-v]
+```
+
+Discover the published geofeed for an IP or prefix via RDAP, fetch it, and query it. The rich format renders the RDAP trace as a tree plus a "Geofeed discovery" panel (green ✓ when found, yellow ✗ when not). The plain format prints the same information as labeled lines.
+
+`--rdap-method rdap.org` (default) uses the rdap.org proxy for fast lookups. `--rdap-method iana-bootstrap` reads IANA bootstrap data and queries the selected RIR endpoint directly.
+
+### `lookup`
+
+```bash
+geofeed-tools lookup QUERY [--format ...] [--all] [--longer] [--rdap-method rdap.org|iana-bootstrap] [-v]
+```
+
+Same RDAP discovery flow as `doctor`, but the output contains only the matching geofeed records (no RDAP metadata). Use `lookup` when you only need the geographic answer; use `doctor` when you also want to see how the answer was discovered.
+
+### `info`
+
+```bash
+geofeed-tools info SOURCE [--format ...] [-v]
+```
+
+Show record, geography, and validation counts. The grep format emits one `key=value` line per metric for easy piping into `grep`/`awk`.
+
+### `hook`
+
+```bash
+geofeed-tools hook SOURCE [--format ...] [--strict] [--show-issues/--no-issues] [-v]
+```
+
+Hook-friendly validation: writes a colorized panel + summary to stderr in rich mode, an emitted `path:line:severity:code:message` list in grep mode (stdout for easy piping), and exits 1 on errors (or warnings with `--strict`).
 
 ## Python API
 
-### Quick Start
+The library is fully usable from Python without the CLI dependencies installed.
+
+### Python API quick start
+
+Sync:
 
 ```python
 from geofeed_tools import GeoFeed
 
 geofeed = GeoFeed("https://api.cloudflare.com/local-ip-ranges.csv")
 
-# Parse into GeofeedRecord objects
-records = geofeed.parse()
+records = geofeed.parse()                              # list[GeofeedRecord]
+records_json = geofeed.parse(output="json")            # JSON string
 
-# Parse into JSON
-json_records = geofeed.parse(output="json")
+report = geofeed.validate(check_aggregation=True)      # ValidationReport
+canonical_csv = geofeed.normalize(output="csv")        # str
 
-# Validate with optional extra aggregation checks enabled
-report = geofeed.validate(check_aggregation=True)
+match = geofeed.query("192.0.2.1")                     # QueryResult
+deep = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True)
 
-# Normalize into canonical CSV output
-normalized_csv = geofeed.normalize(output="csv")
+# RDAP discovery is a static helper — no instance required
+diagnosis = GeoFeed.doctor("31.133.128.1")             # DoctorResult
+matches = GeoFeed.lookup("31.133.128.1")               # QueryResult
 
-# Longest-prefix query for an IP address
-match_ip = geofeed.query("192.0.2.1")
+summary = geofeed.info()                               # GeoFeedInfo
 
-# Query a prefix and include all matching sub-prefixes
-all_matches = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True)
-
-# Discover the published geofeed for an address or prefix via RDAP
-diagnosis = GeoFeed.doctor("31.133.128.1")
-
-# Discover the published geofeed and return only query matches
-lookup = GeoFeed.lookup("31.133.128.1")
-
-# Build a high-level summary
-summary = geofeed.info()
+# Eager constructor alternative (symmetric with AsyncGeoFeed.from_source)
+loaded = GeoFeed.from_source("geofeeds.csv")
 ```
 
-Async quick start:
+Async:
 
 ```python
 from geofeed_tools import AsyncGeoFeed
 
 geofeed = AsyncGeoFeed("https://api.cloudflare.com/local-ip-ranges.csv")
 
-# Loading is lazy by default; the first awaited operation fetches the source
-# Methods mirror GeoFeed, but are awaitable
+# Loading is lazy by default; the first awaited operation fetches the source.
 records = await geofeed.parse()
 report = await geofeed.validate(check_aggregation=True)
 summary = await geofeed.info()
 
-# RDAP-based discovery does not require constructing an instance first
+# RDAP discovery does not require an instance
 diagnosis = await AsyncGeoFeed.doctor("31.133.128.1")
-lookup = await AsyncGeoFeed.lookup("31.133.128.1")
+matches = await AsyncGeoFeed.lookup("31.133.128.1")
 
-# Or eagerly load first with the async factory
+# Eager-load factory
 preloaded = await AsyncGeoFeed.from_source("https://api.cloudflare.com/local-ip-ranges.csv")
 ```
 
-### Public Imports
-
-The top-level package exports the main API object plus the public dataclasses:
+### `GeoFeed` class
 
 ```python
-from geofeed_tools import (
-  AsyncGeoFeed,
-  DoctorLookup,
-  DoctorResult,
-  GeoFeedDiscoveryError,
-	GeoFeed,
-	GeoFeedInfo,
-	GeofeedRecord,
-	QueryResult,
-	ValidationIssue,
-	ValidationReport,
-)
+GeoFeed(source: str, *, auto_load: bool = True, cache_query_index: bool = True)
+GeoFeed.from_source(source: str, *, cache_query_index: bool = True) -> GeoFeed
 ```
 
-### `AsyncGeoFeed`
+| Argument            | Default | Meaning                                                                            |
+| ------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `source`            | —       | Local file path or HTTP(S) URL.                                                    |
+| `auto_load`         | `True`  | If `True`, load the source immediately; otherwise lazily on first operation.       |
+| `cache_query_index` | `True`  | Cache the parsed query index between `query()` calls for repeated lookups.         |
 
-`AsyncGeoFeed` is the native async counterpart to `GeoFeed` for library users who want to integrate geofeed processing into an asyncio application.
+After loading: `source`, `raw`, `content_type`, and `text` are populated.
 
-Unlike `GeoFeed`, `AsyncGeoFeed` does not have an `auto_load` constructor flag. Instances load lazily on the first awaited operation, or eagerly via `await AsyncGeoFeed.from_source(...)`.
+Methods (every method also accepts `output="objects"` (default), `"json"`, and, where applicable, `"csv"` or `"text"`):
 
-Constructor:
+| Method                                       | Return                                | Notes                                                                                       |
+| -------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `reload()`                                   | `None`                                | Re-fetch / re-read the source.                                                              |
+| `parse(*, include_validation, normalize)`    | `list[GeofeedRecord] \| str`          | Records, optionally annotated with `valid`/`validation_messages`.                           |
+| `validate(*, check_sort, check_content_type, check_aggregation)` | `ValidationReport \| str` | Structured validation report.                                                               |
+| `normalize(*, uppercase, sort, aggregate, dedupe, fix_host_bits)` | `list[GeofeedRecord] \| str` | Canonical normalized records.                                                               |
+| `query(query, *, return_all, include_longer)` | `QueryResult \| str`                  | Longest-prefix match (default) or all matches.                                              |
+| `info()`                                     | `GeoFeedInfo \| str`                  | Aggregate statistics.                                                                       |
+
+Behavior notes:
+
+- `parse()`: malformed CSV rows and rows with empty prefixes are skipped. Rows with invalid CIDRs are still returned and, with `include_validation=True`, marked invalid. With `normalize=True`, source line numbers are not preserved.
+- `normalize()`: `aggregate=True` implies dedupe within each metadata group. `fix_host_bits=False` skips rows like `192.0.2.5/24` instead of coercing them.
+- `query()`: for IP queries the default returns the most specific covering prefix. `return_all=True` returns every match ordered most-specific first; `include_longer=True` also includes more-specific prefixes contained by the queried CIDR.
+
+### `AsyncGeoFeed` class
 
 ```python
 AsyncGeoFeed(source: str, *, cache_query_index: bool = True)
+await AsyncGeoFeed.from_source(source: str, *, cache_query_index: bool = True) -> AsyncGeoFeed
 ```
 
-Async factory for eager loading:
+Mirrors `GeoFeed` but loads, parses, validates, normalizes, queries, and computes info asynchronously. CPU-bound work runs in a worker thread so the event loop stays responsive. URL fetches use `httpx` and require the `geofeed-tools[async]` extra; local file reads are offloaded via `asyncio.to_thread`. `AsyncGeoFeed` has no `auto_load` flag — use `from_source` for one-step construction + load.
+
+### Static helpers (`doctor` / `lookup`)
 
 ```python
-await AsyncGeoFeed.from_source(
-    source: str,
-    *,
-    cache_query_index: bool = True,
-) -> AsyncGeoFeed
+GeoFeed.doctor(query, *, return_all=False, include_longer=False, rdap_method="rdap.org", output="objects") -> DoctorResult | str
+GeoFeed.lookup(query, *, return_all=False, include_longer=False, rdap_method="rdap.org", output="objects") -> QueryResult | str
+
+await AsyncGeoFeed.doctor(...)
+await AsyncGeoFeed.lookup(...)
 ```
 
-Available async methods:
+`doctor()` returns the full `DoctorResult` (RDAP trace + matches). `lookup()` returns only the `QueryResult` and raises `GeoFeedDiscoveryError` when no geofeed URL is published.
 
-- `await reload() -> None`
-- `await parse(...) -> list[GeofeedRecord] | str`
-- `await validate(...) -> ValidationReport | str`
-- `await normalize(...) -> list[GeofeedRecord] | str`
-- `await query(...) -> QueryResult | str`
-- `await AsyncGeoFeed.doctor(...) -> DoctorResult | str`
-- `await AsyncGeoFeed.lookup(...) -> QueryResult | str`
-- `await info(...) -> GeoFeedInfo | str`
+| `rdap_method`     | Behavior                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `"rdap.org"`      | Default. Fast gateway lookups via the rdap.org proxy.                                 |
+| `"iana-bootstrap"` | Reads IANA bootstrap data and queries the selected RIR service directly.              |
 
-Behavior notes:
+Discovery walks `rdap-up` parents and supports both direct `rel=geofeed` links and remarks/comments containing `Geofeed: https://…`.
 
-- `AsyncGeoFeed` accepts the same flags and output modes as `GeoFeed` for `parse()`, `validate()`, `normalize()`, `query()`, and `info()`.
-- `AsyncGeoFeed(source, ...)` is lazy-loaded. Use `await AsyncGeoFeed.from_source(...)` when you want construction and loading in one step.
-- `cache_query_index=False` disables per-instance query-index caching for repeated `await query(...)` calls.
-- `AsyncGeoFeed.doctor()` is a static async helper that performs RDAP discovery, fetches the published geofeed, and returns structured lookup metadata together with the geofeed matches.
-- `AsyncGeoFeed.lookup()` is the async counterpart to `GeoFeed.lookup()`: it performs the same RDAP discovery flow but returns only `QueryResult` data.
-- Local file loading is performed asynchronously via thread offloading.
-- Remote URL loading uses async HTTP and requires the `geofeed-tools[async]` extra.
-- Parsing, validation, normalization, querying, and info generation run off the event loop in worker threads so library consumers can use the API without blocking the loop on large feeds.
+### Data models
 
-### `GeoFeed`
-
-#### Constructor
-
-```python
-GeoFeed(
-    source: str,
-    *,
-    auto_load: bool = True,
-    cache_query_index: bool = True,
-)
-```
-
-Create a geofeed wrapper around a local file path or an HTTP(S) URL.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `source` | `str` | required | Local file path or remote HTTP(S) geofeed URL. |
-| `auto_load` | `bool` | `True` | Load the source immediately. If `False`, the first call to `parse()`, `validate()`, `normalize()`, `query()`, `info()`, or `reload()` performs the load. |
-| `cache_query_index` | `bool` | `True` | Cache the parsed query index on the instance between `query()` calls. Set to `False` for one-shot usage patterns where index reuse is not helpful. |
-
-After loading, the object keeps these attributes populated:
-
-- `source`: original path or URL
-- `raw`: raw bytes fetched from the source
-- `content_type`: HTTP `Content-Type` header for URL sources, otherwise `None`
-- `text`: decoded UTF-8 text with any UTF-8 BOM stripped during load
-- query-index cache state used by `query()` when `cache_query_index=True`
-
-#### `reload()`
-
-```python
-reload() -> None
-```
-
-Re-read a local file or re-fetch a remote URL and refresh `raw`, `content_type`, and `text`.
-
-#### `parse()`
-
-```python
-parse(
-	*,
-	include_validation: bool = True,
-	normalize: bool = False,
-	output: str = "objects",
-) -> list[GeofeedRecord] | str
-```
-
-Parse the current source into geofeed records.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `include_validation` | `bool` | `True` | Annotate each returned record with `valid` and `validation_messages` based on validation errors. |
-| `normalize` | `bool` | `False` | Normalize the feed first, then return normalized records instead of the original parsed rows. |
-| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"csv"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `list[GeofeedRecord]`
-- `output="json"`: returns a JSON array string
-- `output="csv"`: returns CSV text
-
-Notes:
-
-- Malformed CSV rows and rows with a missing prefix are skipped during parsing.
-- Rows with invalid prefixes are still returned by `parse()`. With `include_validation=True`, those records are marked invalid and include the corresponding validation messages.
-- For `output="json"` and `output="csv"`, `include_validation=True` includes the `valid` state and validation messages in the serialized output.
-- With `normalize=True`, records are rebuilt from normalized output. That is useful for producing clean data, but it does not preserve original source line numbers. If you need original per-line validation context, use `normalize=False`.
-
-#### `validate()`
-
-```python
-validate(
-	*,
-	check_sort: bool = True,
-	check_content_type: bool = True,
-	check_aggregation: bool = False,
-	output: str = "objects",
-) -> ValidationReport | str
-```
-
-Validate the current source and return a structured report.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `check_sort` | `bool` | `True` | Check whether records are emitted in sorted prefix order. |
-| `check_content_type` | `bool` | `True` | For HTTP(S) sources, warn when the response `Content-Type` is not `text/csv`. |
-| `check_aggregation` | `bool` | `False` | Warn when multiple prefixes with identical geo metadata could be safely aggregated. |
-| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"text"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `ValidationReport`
-- `output="json"`: returns a JSON object string
-- `output="text"`: returns a human-readable text report
-
-#### `normalize()`
-
-```python
-normalize(
-	*,
-	uppercase: bool = True,
-	sort: bool = True,
-	aggregate: bool = True,
-	dedupe: bool = True,
-	fix_host_bits: bool = True,
-	output: str = "objects",
-) -> list[GeofeedRecord] | str
-```
-
-Normalize records into a cleaner, more canonical form.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `uppercase` | `bool` | `True` | Uppercase country and region fields. |
-| `sort` | `bool` | `True` | Sort normalized output by IP family and network value. |
-| `aggregate` | `bool` | `True` | Collapse prefixes that share identical geo metadata into larger prefixes when possible. |
-| `dedupe` | `bool` | `True` | Remove exact duplicate `prefix + metadata` rows when `aggregate=False`. |
-| `fix_host_bits` | `bool` | `True` | Accept prefixes with host bits set and coerce them to the containing network. If `False`, such rows are skipped. |
-| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"csv"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `list[GeofeedRecord]`
-- `output="json"`: returns a JSON array string
-- `output="csv"`: returns CSV text
-
-Notes:
-
-- `aggregate=True` already removes exact duplicate networks within each metadata group, so `dedupe` only has an effect when `aggregate=False`.
-- Normalized records are synthetic output rows. They do not preserve original line numbers, raw input lines, or validation metadata.
-
-#### `query()`
-
-```python
-query(
-	query: str,
-	*,
-	return_all: bool = False,
-	include_longer: bool = False,
-	output: str = "objects",
-) -> QueryResult | str
-```
-
-Query the current geofeed with an IP address or CIDR prefix.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `query` | `str` | required | IP address or CIDR prefix to look up. |
-| `return_all` | `bool` | `False` | Return every match instead of only the most specific one. |
-| `include_longer` | `bool` | `False` | When the query is a prefix, include more-specific records that are contained inside that prefix. |
-| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"csv"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `QueryResult`
-- `output="json"`: returns a JSON object string
-- `output="csv"`: returns CSV text containing matching records only
-
-Matching behavior:
-
-- For IP queries, the default behavior is effectively longest-prefix match.
-- For prefix queries, the default behavior returns the most specific covering prefix.
-- `return_all=True` returns every match sorted from most specific to least specific.
-- `include_longer=True` also returns more-specific prefixes contained by the queried network.
-
-#### `doctor()`
-
-```python
-GeoFeed.doctor(
-  query: str,
-  *,
-  return_all: bool = False,
-  include_longer: bool = False,
-  rdap_method: str = "rdap.org",
-  output: str = "objects",
-) -> DoctorResult | str
-```
-
-Discover a published geofeed for an IP address or prefix via RDAP, fetch that geofeed, and query it.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `query` | `str` | required | IP address or CIDR prefix to diagnose. |
-| `return_all` | `bool` | `False` | Return every matching geofeed row instead of only the most specific one. |
-| `include_longer` | `bool` | `False` | When the query is a prefix, include more-specific rows contained inside that prefix. |
-| `rdap_method` | `str` | `"rdap.org"` | RDAP lookup method: `"rdap.org"` for fast gateway lookups or `"iana-bootstrap"` to resolve the RIR service directly from IANA bootstrap data. |
-| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"text"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `DoctorResult`
-- `output="json"`: returns a JSON object string
-- `output="text"`: returns a human-readable text report with lookup trace and matches
-
-Behavior notes:
-
-- `GeoFeed.doctor()` is a static helper. It does not use a preloaded `GeoFeed` instance or require a `source` argument.
-- IP input is queried against RDAP directly. Prefix input is resolved via the prefix network address because RDAP IP lookups are address-based.
-- Discovery supports direct RDAP geofeed links as well as remark/comment references such as `Geofeed: https://example.com/geofeed.csv`.
-- If the most specific RDAP object does not publish a geofeed reference but exposes `rdap-up`, the lookup walks parent objects until the most specific published geofeed reference is found.
-- Only geofeed rows covered by the referring RDAP object range are considered during the final lookup.
-- `rdap_method="rdap.org"` is the default because it avoids downloading bootstrap data for each process start. `rdap_method="iana-bootstrap"` uses IANA bootstrap files to select the registry endpoint directly, which is useful when you do not want to rely on rdap.org.
-
-#### `lookup()`
-
-```python
-GeoFeed.lookup(
-  query: str,
-  *,
-  return_all: bool = False,
-  include_longer: bool = False,
-  rdap_method: str = "rdap.org",
-  output: str = "objects",
-) -> QueryResult | str
-```
-
-Discover a published geofeed for an IP address or prefix via RDAP, fetch that geofeed, and return only the query result.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `query` | `str` | required | IP address or CIDR prefix to look up. |
-| `return_all` | `bool` | `False` | Return every matching geofeed row instead of only the most specific one. |
-| `include_longer` | `bool` | `False` | When the query is a prefix, include more-specific rows contained inside that prefix. |
-| `rdap_method` | `str` | `"rdap.org"` | RDAP lookup method: `"rdap.org"` for fast gateway lookups or `"iana-bootstrap"` to resolve the RIR service directly from IANA bootstrap data. |
-| `output` | `str` | `"objects"` | One of `"objects"`, `"json"`, or `"csv"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `QueryResult`
-- `output="json"`: returns a JSON object string
-- `output="csv"`: returns CSV text containing matching records only
-
-Behavior notes:
-
-- `GeoFeed.lookup()` is a static helper. It does not require a preloaded `GeoFeed` instance or a `source` argument.
-- It uses the same RDAP discovery rules as `GeoFeed.doctor()` but strips the RDAP metadata from the return value.
-- If no published geofeed URL is found, it raises `GeoFeedDiscoveryError`.
-
-#### `info()`
-
-```python
-info(*, output: str = "objects") -> GeoFeedInfo | str
-```
-
-Compute summary statistics for the current geofeed.
-
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `output` | `str` | `"objects"` | One of `"objects"` or `"json"`. Any other value raises `ValueError`. |
-
-Return modes:
-
-- `output="objects"`: returns `GeoFeedInfo`
-- `output="json"`: returns a JSON object string
-
-### Public Data Models
+All public dataclasses are exported from `geofeed_tools`. Every one provides an `as_dict()` method.
 
 #### `GeofeedRecord`
 
-Represents a single geofeed row.
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `prefix` | `str` | Network prefix from the feed. |
-| `country` | `str` | ISO 3166-1 alpha-2 country code when present. |
-| `region` | `str` | Region or subdivision field. |
-| `city` | `str` | City field. |
-| `postal_code` | `str` | Postal code field. |
-| `line` | `int` | Source line number when the record came directly from parsing. Normalized records may use `0`. |
-| `raw_line` | `str | None` | Original source line when available. Query results include this when sourced from the original feed. |
-| `valid` | `bool` | `True` when no validation errors were attached to the record. |
-| `validation_messages` | `tuple[str, ...]` | Record-level validation error messages. |
-
-Helper:
-
-```python
-record.as_dict(include_validation: bool = True, include_raw_line: bool = False) -> dict[str, object]
-```
+| Field                 | Type                | Meaning                                                            |
+| --------------------- | ------------------- | ------------------------------------------------------------------ |
+| `prefix`              | `str`               | Network prefix.                                                    |
+| `country`             | `str`               | ISO 3166-1 alpha-2 code.                                           |
+| `region`              | `str`               | ISO 3166-2 subdivision code.                                       |
+| `city`                | `str`               | City field.                                                        |
+| `postal_code`         | `str`               | Postal code field.                                                 |
+| `line`                | `int`               | Source line number (`0` for synthesized normalized records).       |
+| `raw_line`            | `str \| None`       | Original source line when available.                               |
+| `valid`               | `bool`              | `True` when no validation errors attached.                         |
+| `validation_messages` | `tuple[str, ...]`   | Record-level validation messages.                                  |
 
 #### `ValidationIssue`
 
-Represents one validation error or warning.
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `severity` | `str` | Usually `"error"` or `"warning"`. |
-| `line` | `int | None` | Source line number, or `None` for file-level issues. |
-| `code` | `str` | Stable machine-readable issue code. |
-| `message` | `str` | Human-readable message text. |
-| `raw_line` | `str | None` | Original line text when available. |
-
-Helper:
-
-```python
-issue.format() -> str
-```
+| Field      | Type           | Meaning                                                |
+| ---------- | -------------- | ------------------------------------------------------ |
+| `severity` | `str`          | Usually `"error"` or `"warning"`.                      |
+| `line`     | `int \| None`  | Source line, or `None` for file-level issues.          |
+| `code`     | `str`          | Stable machine-readable code (`invalid-prefix`, etc.). |
+| `message`  | `str`          | Human-readable message.                                |
+| `raw_line` | `str \| None`  | Original line text when available.                     |
 
 #### `ValidationReport`
 
-Overall validation result for a feed.
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `source` | `str` | Original path or URL. |
-| `records` | `int` | Number of data records processed. |
-| `errors` | `int` | Number of validation errors. |
-| `warnings` | `int` | Number of validation warnings. |
-| `valid` | `bool` | `True` when `errors == 0`. |
-| `issues` | `tuple[ValidationIssue, ...]` | Full issue list. |
-
-Helper:
-
-```python
-report.as_dict() -> dict[str, object]
-```
+| Field      | Type                            | Meaning                              |
+| ---------- | ------------------------------- | ------------------------------------ |
+| `source`   | `str`                           | Original path or URL.                |
+| `records`  | `int`                           | Number of records processed.         |
+| `errors`   | `int`                           | Error count.                         |
+| `warnings` | `int`                           | Warning count.                       |
+| `valid`    | `bool`                          | `True` when `errors == 0`.           |
+| `issues`   | `tuple[ValidationIssue, ...]`   | Full issue list.                     |
 
 #### `QueryResult`
 
-Lookup result returned by `GeoFeed.query()`.
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `query` | `str` | Original query string. |
-| `matches` | `tuple[GeofeedRecord, ...]` | Matching records, ordered most-specific first. |
-
-Helper:
-
-```python
-result.as_dict() -> dict[str, object]
-```
+| Field     | Type                          | Meaning                                       |
+| --------- | ----------------------------- | --------------------------------------------- |
+| `query`   | `str`                         | Original query.                               |
+| `matches` | `tuple[GeofeedRecord, ...]`   | Matching records, most-specific first.        |
 
 #### `DoctorLookup`
 
-Lookup metadata returned inside `DoctorResult.lookup`.
+RDAP discovery metadata returned inside `DoctorResult.lookup`.
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `lookup_strategy` | `str` | How the RDAP lookup was performed, such as `"ip-address"` or `"prefix-network-address"`. |
-| `rdap_method` | `str` | RDAP lookup method used, such as `"rdap.org"` or `"iana-bootstrap"`. |
-| `rdap_query` | `str` | The single IP address used for the RDAP lookup. |
-| `bootstrap_url` | `str` | Initial RDAP object URL queried after method selection. |
-| `bootstrap_source_url` | `str | None` | Bootstrap source used to choose `bootstrap_url`, such as `https://rdap.org/` or an IANA bootstrap JSON file. |
-| `resolved_urls` | `tuple[str, ...]` | RDAP object URLs visited during discovery, ordered from most specific to broader parents. |
-| `referring_handle` | `str | None` | Handle of the RDAP object that published the selected geofeed reference, when available. |
-| `referring_range` | `str | None` | Start/end range of the referring RDAP object, when available. |
-| `geofeed_url` | `str | None` | Published geofeed URL, or `None` when no geofeed reference was found. |
-| `geofeed_discovered_via` | `str | None` | How the geofeed reference was discovered, such as a direct RDAP link or remarks-based reference. |
-| `geofeed_reference_url` | `str | None` | RDAP object URL where the geofeed reference was found. |
-
-Helper:
-
-```python
-lookup.as_dict() -> dict[str, object]
-```
+| Field                     | Type            | Meaning                                                     |
+| ------------------------- | --------------- | ----------------------------------------------------------- |
+| `lookup_strategy`         | `str`           | `"ip-address"` or `"prefix-network-address"`.               |
+| `rdap_method`             | `str`           | `"rdap.org"` or `"iana-bootstrap"`.                         |
+| `rdap_query`              | `str`           | IP address used for the RDAP lookup.                        |
+| `bootstrap_url`           | `str`           | First RDAP URL queried.                                     |
+| `bootstrap_source_url`    | `str \| None`   | Bootstrap source (rdap.org or an IANA JSON file).           |
+| `resolved_urls`           | `tuple[str,…]`  | RDAP URLs visited, ordered most-specific to broader.        |
+| `referring_handle`        | `str \| None`   | Handle of the RDAP object that published the geofeed.       |
+| `referring_range`         | `str \| None`   | IP range of the referring RDAP object.                      |
+| `geofeed_url`             | `str \| None`   | Published geofeed URL or `None` if not found.               |
+| `geofeed_discovered_via`  | `str \| None`   | How the reference was found (link / remarks / comments).    |
+| `geofeed_reference_url`   | `str \| None`   | RDAP URL where the geofeed reference appears.               |
 
 #### `DoctorResult`
 
-Lookup result returned by `GeoFeed.doctor()` or `AsyncGeoFeed.doctor()`.
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `query` | `str` | Original query string. |
-| `lookup` | `DoctorLookup` | RDAP discovery metadata and geofeed location information. |
-| `matches` | `tuple[GeofeedRecord, ...]` | Matching geofeed rows, ordered most-specific first. |
-
-Helper:
-
-```python
-result.as_dict() -> dict[str, object]
-```
+| Field     | Type                          | Meaning                                  |
+| --------- | ----------------------------- | ---------------------------------------- |
+| `query`   | `str`                         | Original query string.                   |
+| `lookup`  | `DoctorLookup`                | RDAP discovery metadata.                 |
+| `matches` | `tuple[GeofeedRecord, ...]`   | Matching geofeed rows.                   |
 
 #### `GeoFeedInfo`
 
-Summary statistics returned by `GeoFeed.info()`.
+| Field                  | Type                  | Meaning                                  |
+| ---------------------- | --------------------- | ---------------------------------------- |
+| `source`               | `str`                 | Original path or URL.                    |
+| `total_records`        | `int`                 | Number of parsed records.                |
+| `unique_prefixes`      | `int`                 | Distinct prefix count.                   |
+| `ipv4_records`         | `int`                 | IPv4 record count.                       |
+| `ipv6_records`         | `int`                 | IPv6 record count.                       |
+| `unique_countries`     | `int`                 | Distinct country count.                  |
+| `unique_regions`       | `int`                 | Distinct region count.                   |
+| `unique_cities`        | `int`                 | Distinct city count.                     |
+| `unique_postal_codes`  | `int`                 | Distinct postal-code count.              |
+| `duplicates`           | `int`                 | `total_records - unique_prefixes`.       |
+| `errors`               | `int`                 | Validation error count.                  |
+| `warnings`             | `int`                 | Validation warning count.                |
+| `metadata`             | `dict[str, object]`   | Reserved for extensible metadata.        |
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `source` | `str` | Original path or URL. |
-| `total_records` | `int` | Number of parsed records. |
-| `unique_prefixes` | `int` | Number of unique prefixes. |
-| `ipv4_records` | `int` | Number of IPv4 records. |
-| `ipv6_records` | `int` | Number of IPv6 records. |
-| `unique_countries` | `int` | Count of distinct country values. |
-| `unique_regions` | `int` | Count of distinct region values. |
-| `unique_cities` | `int` | Count of distinct city values. |
-| `unique_postal_codes` | `int` | Count of distinct postal-code values. |
-| `duplicates` | `int` | Total records minus unique prefixes. |
-| `errors` | `int` | Validation error count. |
-| `warnings` | `int` | Validation warning count. |
-| `metadata` | `dict[str, object]` | Reserved extensible metadata dictionary. |
+### Error handling
 
-Helper:
-
-```python
-info.as_dict() -> dict[str, object]
-```
-
-### Error Handling
-
-Common exceptions to expect when using the Python API:
-
-- `ValueError`: invalid `output` mode or an invalid query string passed to `query()`, `doctor()`, or `lookup()`
-- `geofeed_tools.GeoFeedDiscoveryError`: `lookup()` could not find any published geofeed URL for the query
-- `FileNotFoundError` or other `OSError` subclasses: local file read failures
-- `geofeed_tools.loader.FetchError`: remote HTTP(S) or RDAP fetch failures
-
-Example:
+| Exception                                  | Raised when                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `ValueError`                               | Invalid `output` mode or unparseable query string.                   |
+| `geofeed_tools.GeoFeedDiscoveryError`      | `lookup()` finds no published geofeed URL.                           |
+| `geofeed_tools.loader.FetchError`          | Remote HTTP(S) or RDAP fetch failure.                                |
+| `FileNotFoundError` / `OSError`            | Local file read failure.                                             |
 
 ```python
 from geofeed_tools import GeoFeed
 from geofeed_tools.loader import FetchError
 
 try:
-	geofeed = GeoFeed("https://example.com/geofeed.csv")
-	report = geofeed.validate(check_content_type=True)
+    geofeed = GeoFeed("https://example.com/geofeed.csv")
+    report = geofeed.validate(check_content_type=True)
 except FetchError as exc:
-	print(f"fetch failed: {exc}")
+    print(f"fetch failed: {exc}")
 ```
 
-## CLI Usage
+## GitHub Actions integration
 
-### Quick Start
+The `hook` command is designed as a CI quality gate. This repository publishes a reusable workflow at [.github/workflows/geofeed-validation.yml](.github/workflows/geofeed-validation.yml) and a caller example at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml).
 
-The CLI entrypoint is:
-
-```bash
-geofeed-tools <command> [options]
-```
-
-Common quick-start examples:
-
-```bash
-# Validate and print a human-readable report
-geofeed-tools validate geofeeds.csv
-
-# Dump parsed records as JSON
-geofeed-tools dump geofeeds.csv
-
-# Dump parsed records as geofeed CSV
-geofeed-tools dump geofeeds.csv --format csv
-
-# Dump parsed records as a table
-geofeed-tools dump geofeeds.csv --format table
-
-# Normalize to canonical CSV and write to a file
-geofeed-tools normalize geofeeds.csv --output normalized.csv
-
-# Query by IP address or prefix
-geofeed-tools query geofeeds.csv 192.0.2.200
-
-# Discover a published geofeed for an address via RDAP
-geofeed-tools doctor 31.133.128.1 --json
-
-# Discover the published geofeed via RDAP and print matching rows only
-geofeed-tools lookup 31.133.128.1
-
-# Show summary statistics
-geofeed-tools info geofeeds.csv
-
-# Use hook mode in CI or pre-commit checks
-geofeed-tools hook geofeeds.csv --strict
-```
-
-For command-specific help:
-
-```bash
-geofeed-tools --help
-geofeed-tools validate --help
-```
-
-### Common CLI Behavior
-
-- Most commands take a `source` positional argument pointing to a local file or HTTP(S) URL.
-- The `doctor` and `lookup` commands take only a `QUERY` positional argument because they discover the geofeed source dynamically via RDAP.
-- Every command supports cumulative `-v` or `--verbose` flags.
-- Verbosity levels are:
-	- `-v`: INFO
-	- `-vv`: DEBUG
-	- `-vvv`: TRACE
-- CLI support is optional. If the CLI extra is not installed, running the command exits with a message telling you to install `geofeed-tools[cli]`.
-
-### Command Reference
-
-#### `validate`
-
-Usage:
-
-```bash
-geofeed-tools validate SOURCE [OPTIONS]
-```
-
-Validate a geofeed source and print either a text report or JSON.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--json` | off | Emit the validation report as JSON instead of text. |
-| `--strict` | off | Exit with code `1` when warnings are present, not just errors. |
-| `--check-aggregation` | off | Enable warnings for prefixes that could be safely aggregated. |
-| `--no-sort-check` | off | Disable sort-order warnings. |
-| `--no-content-type-check` | off | Disable `Content-Type` warnings for URL sources. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools validate geofeeds.csv
-geofeed-tools validate geofeeds.csv --json
-geofeed-tools validate geofeeds.csv --check-aggregation
-geofeed-tools validate geofeeds.csv --no-sort-check --no-content-type-check
-geofeed-tools validate geofeeds.csv --strict
-```
-
-Exit behavior:
-
-- Exits `0` when there are no validation errors.
-- Exits `1` when validation errors are found.
-- With `--strict`, exits `1` when warnings are found too.
-
-#### `dump`
-
-Usage:
-
-```bash
-geofeed-tools dump SOURCE [OPTIONS]
-```
-
-Parse the geofeed and print records as a JSON array.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--format`, `-f` | `json` | Output format: `json`, `csv`, or `table`. |
-| `--normalize` | off | Normalize records before dumping them. |
-| `--no-validation` | off | Skip per-record validation annotations in JSON or table output. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools dump geofeeds.csv
-geofeed-tools dump geofeeds.csv --format csv
-geofeed-tools dump geofeeds.csv --format table
-geofeed-tools dump geofeeds.csv --no-validation
-geofeed-tools dump geofeeds.csv --normalize
-```
-
-Output notes:
-
-- Default output is JSON.
-- `--format csv` emits standard 5-column geofeed rows.
-- `--format table` emits a GitHub-style table rendered with `tabulate`.
-- By default, JSON and table output include `valid` and `validation_messages` fields.
-- `--no-validation` affects JSON and table output only. CSV output always uses plain geofeed rows.
-- With `--normalize`, the output reflects normalized records rather than the original parsed rows.
-
-#### `normalize`
-
-Usage:
-
-```bash
-geofeed-tools normalize SOURCE [OPTIONS]
-```
-
-Normalize a geofeed and emit canonical CSV.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--output`, `-o` | stdout | Write normalized CSV to a file instead of stdout. |
-| `--no-uppercase` | off | Do not uppercase country and region fields. |
-| `--no-sort` | off | Do not sort output by IP family and network. |
-| `--no-aggregate` | off | Do not collapse compatible prefixes into larger prefixes. |
-| `--no-dedupe` | off | Do not remove exact duplicate rows when aggregation is disabled. |
-| `--no-host-bit-fix` | off | Do not coerce prefixes with host bits set to their containing network. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools normalize geofeeds.csv
-geofeed-tools normalize geofeeds.csv --output normalized.csv
-geofeed-tools normalize geofeeds.csv --no-uppercase --no-sort --no-aggregate --no-dedupe --no-host-bit-fix
-```
-
-Output notes:
-
-- Output is always CSV.
-- Without `--output`, the normalized CSV is printed to stdout.
-- With `--output`, the destination file is written using UTF-8 encoding.
-
-#### `query`
-
-Usage:
-
-```bash
-geofeed-tools query SOURCE QUERY [OPTIONS]
-```
-
-Query a geofeed using an IP address or CIDR prefix.
-
-| Argument | Meaning |
-| --- | --- |
-| `SOURCE` | Local file path or HTTP(S) geofeed URL. |
-| `QUERY` | IP address or CIDR prefix to look up. |
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--all` | off | Return all matches instead of only the most specific match. |
-| `--longer` | off | Include more-specific prefixes contained by the query prefix. |
-| `--json` | off | Emit a JSON result object instead of CSV rows. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools query geofeeds.csv 192.0.2.200
-geofeed-tools query geofeeds.csv 192.0.2.200 --json
-geofeed-tools query geofeeds.csv 192.0.2.0/24 --all --longer --json
-```
-
-Output and exit notes:
-
-- Default output is CSV containing matching rows only.
-- With `--json`, output is a JSON object with `query` and `matches`.
-- In CSV mode, no match prints an error to stderr and exits with code `1`.
-- In JSON mode, no match returns an empty `matches` array and exits successfully.
-
-#### `doctor`
-
-Usage:
-
-```bash
-geofeed-tools doctor QUERY [OPTIONS]
-```
-
-Discover a published geofeed via RDAP and query it using an IP address or CIDR prefix.
-
-| Argument | Meaning |
-| --- | --- |
-| `QUERY` | IP address or CIDR prefix to diagnose. |
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--all` | off | Return all matches instead of only the most specific match. |
-| `--longer` | off | Include more-specific prefixes contained by the query prefix. |
-| `--rdap-method` | `rdap.org` | RDAP lookup method: `rdap.org` (default) or `iana-bootstrap`. |
-| `--json` | off | Emit a JSON result object instead of the default text report. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools doctor 31.133.128.1
-geofeed-tools doctor 31.133.128.1 --json
-geofeed-tools doctor 192.0.2.0/24 --all --longer
-geofeed-tools doctor 31.133.128.1 --rdap-method iana-bootstrap
-```
-
-Output and exit notes:
-
-- Default output is a text report with the RDAP lookup trace, referring object, geofeed URL, and matching rows.
-- With `--json`, output is a JSON object containing `query`, `lookup`, and `matches`.
-- `--rdap-method rdap.org` is the default because it is faster for one-off lookups. `--rdap-method iana-bootstrap` avoids relying on rdap.org and queries the selected RIR service directly after reading the IANA bootstrap file.
-- Exits `0` when a geofeed is discovered and at least one matching row is found.
-- Exits `1` when no geofeed reference is published or when the discovered geofeed contains no matching row for the query.
-
-#### `lookup`
-
-Usage:
-
-```bash
-geofeed-tools lookup QUERY [OPTIONS]
-```
-
-Discover a published geofeed via RDAP and emit query-style output for an IP address or CIDR prefix.
-
-| Argument | Meaning |
-| --- | --- |
-| `QUERY` | IP address or CIDR prefix to look up. |
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--all` | off | Return all matches instead of only the most specific match. |
-| `--longer` | off | Include more-specific prefixes contained by the query prefix. |
-| `--rdap-method` | `rdap.org` | RDAP lookup method: `rdap.org` (default) or `iana-bootstrap`. |
-| `--json` | off | Emit a JSON result object instead of CSV rows. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools lookup 31.133.128.1
-geofeed-tools lookup 31.133.128.1 --json
-geofeed-tools lookup 192.0.2.0/24 --all --longer
-geofeed-tools lookup 31.133.128.1 --rdap-method iana-bootstrap
-```
-
-Output and exit notes:
-
-- Default output is CSV containing matching rows only.
-- With `--json`, output is a JSON object with `query` and `matches`.
-- `--rdap-method rdap.org` is the default because it is faster for one-off lookups. `--rdap-method iana-bootstrap` avoids relying on rdap.org and queries the selected RIR service directly after reading the IANA bootstrap file.
-- Exits `0` when a geofeed is discovered and at least one matching row is found.
-- Exits `1` when no geofeed reference is published.
-- Exits `1` when the discovered geofeed contains no matching row for the query, including in JSON mode.
-
-#### `info`
-
-Usage:
-
-```bash
-geofeed-tools info SOURCE [OPTIONS]
-```
-
-Display high-level geofeed statistics.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--json` | off | Emit summary information as JSON instead of tables. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools info geofeeds.csv
-geofeed-tools info geofeeds.csv --json
-```
-
-Output notes:
-
-- Default output is a human-readable summary rendered as multiple GitHub-style tables.
-- JSON mode returns the same data as the Python `GeoFeed.info(output="json")` API.
-
-#### `hook`
-
-Usage:
-
-```bash
-geofeed-tools hook SOURCE [OPTIONS]
-```
-
-Run validation in a hook-friendly mode for CI, pre-commit, or automated checks.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--strict` | off | Fail when warnings are present, not just errors. |
-| `--show-issues` / `--no-issues` | `--show-issues` | Print or suppress individual validation issue lines. |
-| `-v`, `--verbose` | `0` | Increase log verbosity. |
-
-Examples:
-
-```bash
-geofeed-tools hook geofeeds.csv
-geofeed-tools hook geofeeds.csv --no-issues
-geofeed-tools hook geofeeds.csv --strict
-```
-
-Output and exit notes:
-
-- Issue lines and summary messages are written to stderr.
-- By default, the command fails only on errors.
-- With `--strict`, the command also fails on warnings.
-- Success summary format is `hook: OK ...`; failure summary format is `hook: FAIL ...`.
-
-### GitHub Actions Integration
-
-The `hook` command is designed to work well as a CI quality gate. This repository publishes a reusable workflow at [.github/workflows/geofeed-validation.yml](.github/workflows/geofeed-validation.yml) and also includes a caller example at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml).
-
-#### How To Use It In Another Repository
-
-Create a small workflow in your repository that calls the shared workflow with `uses`:
+Minimal caller workflow:
 
 ```yaml
 name: Validate geofeed
 
 on:
   pull_request:
-    paths:
-      - "path/to/geofeed.csv"
+    paths: ["path/to/geofeed.csv"]
   push:
-    branches:
-      - main
-    paths:
-      - "path/to/geofeed.csv"
+    branches: [main]
+    paths: ["path/to/geofeed.csv"]
   workflow_dispatch:
 
 permissions:
@@ -1023,69 +457,40 @@ jobs:
     uses: python-modules/geofeed-tools/.github/workflows/geofeed-validation.yml@main
     with:
       geofeed_path: path/to/geofeed.csv
-      strict: false
+      strict: false   # set true to fail on warnings as well as errors
 ```
-
-Replace `path/to/geofeed.csv` with the tracked geofeed file path in your repository.
-
-The above example disables strict mode validation - warnings are logged but permitted. To require strict mode validation set `strict` to `true`.
 
 ## Testing
 
-Recommended workflow commands:
-
 ```bash
-make test
-make test-html
-make test-integration
+make test                # unit tests (no network)
+make test-integration    # real HTTP fetches
+make test-html           # writes reports/pytest-report.html
 ```
 
-`make test-html` writes a self-contained report to:
-
-- `reports/pytest-report.html`
-
-Run non-integration tests:
+Equivalent direct invocations:
 
 ```bash
 pytest -m "not integration"
-```
-
-Run integration tests (real HTTP requests):
-
-```bash
 pytest -m integration
 ```
 
-### HTML test reports
+`pytest-html` is wired up in `pyproject.toml`; running `pytest` always produces a self-contained `reports/pytest-report.html`.
 
-`pytest-html` is configured in `pyproject.toml`. Running `pytest` generates a
-self-contained HTML report at:
-
-- `reports/pytest-report.html`
-
-Open it in a browser after test execution.
-
-### Test Notes
-
-- Integration tests depend HTTP access to a set of well known geofeed files. The content of those files may change at any time resulting in different test failures.
+Integration tests depend on HTTP access to well-known public geofeed files. Their contents may change at any time and produce test failures unrelated to code changes.
 
 ## Configuration
 
-All tuneable defaults and external service endpoints are centralised in [`src/geofeed_tools/config.py`](src/geofeed_tools/config.py). Edit that file to adjust any of the following without hunting through individual implementation modules:
+All tuneable defaults and external endpoints live in [`src/geofeed_tools/config.py`](src/geofeed_tools/config.py). Most users never need to touch them; the most relevant are:
 
-| Constant | Default | Purpose |
-| --- | --- | --- |
-| `USER_AGENT` | `geofeed-tools/<version>` | `User-Agent` header sent with all outgoing HTTP requests. |
-| `FETCH_TIMEOUT` | `30` | Seconds to wait for a remote HTTP response before giving up. |
-| `URL_SCHEMES` | `("http://", "https://")` | Accepted URL schemes for remote geofeed sources. |
-| `LOGGER_NAME` | `"geofeed_tools"` | Root logger name used throughout the package. |
-| `TRACE_LEVEL` | `5` | Numeric log level below `DEBUG` used for verbose HTTP tracing (`-vvv`). |
-| `LRU_COUNTRY_CACHE_SIZE` | `512` | Maximum entries in the ISO 3166-1 country code lookup cache. |
-| `LRU_SUBDIVISION_CACHE_SIZE` | `4096` | Maximum entries in the ISO 3166-2 subdivision code lookup cache. |
-| `DEFAULT_RDAP_METHOD` | `"rdap.org"` | RDAP lookup method used when no explicit method is specified. |
-| `RDAP_ORG_ROOT_URL` | `https://rdap.org/` | Base URL for the rdap.org proxy service. |
-| `RDAP_ORG_QUERY_TEMPLATE` | `https://rdap.org/ip/{}` | URL template for rdap.org IP queries. |
-| `IANA_BOOTSTRAP_URLS` | IPv4/IPv6 IANA JSON endpoints | IANA RDAP bootstrap index URLs keyed by IP version. |
-| `MAX_RDAP_DEPTH` | `8` | Maximum RDAP redirect hops before aborting a lookup. |
-| `RDAP_ACCEPT` | `application/rdap+json, …` | `Accept` header sent with RDAP queries. |
-| `JSON_ACCEPT` | `application/json, …` | `Accept` header sent with plain JSON requests (e.g. IANA bootstrap). |
+| Constant                      | Default                          | Purpose                                                   |
+| ----------------------------- | -------------------------------- | --------------------------------------------------------- |
+| `FETCH_TIMEOUT`               | `30`                             | HTTP timeout in seconds.                                  |
+| `USER_AGENT`                  | `geofeed-tools/<version>`        | User-Agent header.                                        |
+| `DEFAULT_RDAP_METHOD`         | `"rdap.org"`                     | RDAP method used when none is specified.                  |
+| `MAX_RDAP_DEPTH`              | `8`                              | RDAP redirect hop cap.                                    |
+| `LRU_COUNTRY_CACHE_SIZE`      | `512`                            | ISO 3166-1 lookup cache size.                             |
+| `LRU_SUBDIVISION_CACHE_SIZE`  | `4096`                           | ISO 3166-2 lookup cache size.                             |
+| `TRACE_LEVEL`                 | `5`                              | Numeric level below DEBUG used by `-vvv`.                 |
+
+See the source file for the full list and inline docstrings.
