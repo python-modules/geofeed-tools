@@ -669,28 +669,6 @@ class GeoFeed(_GeoFeedBase):
             output=output,
         )
 
-    @staticmethod
-    def lookup(
-        query: str,
-        *,
-        return_all: bool = False,
-        include_longer: bool = False,
-        rdap_method: str = DEFAULT_RDAP_METHOD,
-        output: str = "objects",
-    ) -> QueryResult | str:
-        """Discover a geofeed via RDAP and return query results for an IP or prefix.
-
-        Equivalent to ``GeoFeed(query, rdap_method=rdap_method).query(query, ...)``;
-        raises ``GeoFeedDiscoveryError`` when no geofeed URL is published.
-        """
-        geofeed = GeoFeed(query, rdap_method=rdap_method)
-        return geofeed.query(
-            query,
-            return_all=return_all,
-            include_longer=include_longer,
-            output=output,
-        )
-
     def info(
         self,
         *,

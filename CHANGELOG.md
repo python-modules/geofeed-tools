@@ -7,8 +7,9 @@ Major changes:
 - Pretty format CLI output by default with colours and better messages
 - Add "--format" flag for CLI commands to choose between rich/plain/grep/json
 - Add filter API/CLI command
-- Remove `hook` CLI command - merged into `validate` command.
+- Remove `hook` CLI command - merged into `validate` command
 - Accept an IP address or prefix instead of file/URL to load geofeed for. If an IP/prefix is provided RDAP will be used to discover the geofeed file.
+- Remove `lookup` command/API - merged into `query` command
 
 Other changes:
 

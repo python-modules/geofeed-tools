@@ -22,6 +22,7 @@ from geofeed_tools.cli.render import (
 )
 from geofeed_tools.info import DEFAULT_TOP_N
 from geofeed_tools.io_utils import doctor_to_json
+from geofeed_tools.loader import is_ip_or_prefix
 from geofeed_tools.logging import configure_cli_structlog
 from geofeed_tools.models import DoctorResult, GeoFeedInfo, QueryResult, ValidationReport
 from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
@@ -105,12 +106,12 @@ def _format_option(typer):
 
 
 def _all_option(typer):
-    """Shared --all option for query/doctor/lookup commands."""
+    """Shared --all option for query/doctor commands."""
     return typer.Option(False, "--all", help="Show all matches")
 
 
 def _longer_option(typer):
-    """Shared --longer option for query/doctor/lookup commands."""
+    """Shared --longer option for query/doctor commands."""
     return typer.Option(
         False,
         "--longer",
@@ -119,7 +120,7 @@ def _longer_option(typer):
 
 
 def _rdap_method_option(typer):
-    """Shared --rdap-method option for doctor/lookup commands."""
+    """Shared --rdap-method option for the doctor command."""
     return typer.Option(
         RdapMethod.RDAP_ORG,
         "--rdap-method",
@@ -180,7 +181,6 @@ def build_app():
     _register_filter_command(app, _typer)
     _register_query_command(app, _typer)
     _register_doctor_command(app, _typer)
-    _register_lookup_command(app, _typer)
     _register_info_command(app, _typer)
     return app
 
@@ -422,15 +422,39 @@ def _register_query_command(app, typer) -> None:
     @app.command("query")
     def query_command(
         source: str = _source_argument(typer),
-        query: str = _query_argument(typer),
+        query: str | None = typer.Argument(
+            None,
+            help=(
+                "IP address or CIDR prefix to look up. "
+                "Optional when SOURCE is itself an IP/prefix; in that case the "
+                "source value is also used as the query."
+            ),
+        ),
         output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
+        rdap_method: RdapMethod = _rdap_method_option(typer),
         verbose: int = _verbose_option(typer),
     ) -> None:
-        """Query a geofeed by IP or prefix."""
+        """Query a geofeed by IP or prefix.
+
+        Pass an IP/prefix as SOURCE to auto-discover the published geofeed via
+        RDAP and search it — QUERY then defaults to the same value.
+        """
         configure_cli_structlog(verbose)
-        geofeed = _load_geofeed(source, output_format, typer, cache_query_index=False)
+        if query is None:
+            if not is_ip_or_prefix(source):
+                raise typer.BadParameter(
+                    "QUERY is required unless SOURCE is an IP address or CIDR prefix",
+                )
+            query = source
+        geofeed = _load_geofeed(
+            source,
+            output_format,
+            typer,
+            cache_query_index=False,
+            rdap_method=rdap_method,
+        )
         result = geofeed.query(
             query,
             return_all=show_all,
@@ -472,36 +496,6 @@ def _register_doctor_command(app, typer) -> None:
         render_doctor(result, format=output_format.value)
 
         if result.lookup.geofeed_url is None or not result.matches:
-            raise typer.Exit(code=1)
-
-
-def _register_lookup_command(app, typer) -> None:
-    """Register the lookup command."""
-
-    @app.command("lookup")
-    def lookup_command(
-        query: str = _query_argument(typer),
-        output_format: OutputFormat = _format_option(typer),
-        show_all: bool = _all_option(typer),
-        include_longer: bool = _longer_option(typer),
-        rdap_method: RdapMethod = _rdap_method_option(typer),
-        verbose: int = _verbose_option(typer),
-    ) -> None:
-        """Discover a published geofeed via RDAP and query it by IP or prefix."""
-        configure_cli_structlog(verbose)
-        geofeed = _load_geofeed(query, output_format, typer, rdap_method=rdap_method)
-        result = geofeed.query(
-            query,
-            return_all=show_all,
-            include_longer=include_longer,
-            output="objects",
-        )
-        assert isinstance(result, QueryResult)
-        render_query(result, format=output_format.value, source_label="Lookup")
-
-        # lookup always exits 1 when no records were matched, including JSON
-        # mode (the discovery half of the workflow is the point of the command).
-        if not result.matches:
             raise typer.Exit(code=1)
 
 

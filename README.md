@@ -14,13 +14,12 @@
     - [`filter`](#filter)
     - [`query`](#query)
     - [`doctor`](#doctor)
-    - [`lookup`](#lookup)
     - [`info`](#info)
   - [Python API](#python-api)
     - [Python API quick start](#python-api-quick-start)
     - [`GeoFeed` class](#geofeed-class)
     - [`AsyncGeoFeed` class](#asyncgeofeed-class)
-    - [Static helpers (`doctor` / `lookup`)](#static-helpers-doctor--lookup)
+    - [Static `doctor` helper](#static-doctor-helper)
     - [Data models](#data-models)
       - [`GeofeedRecord`](#geofeedrecord)
       - [`ValidationIssue`](#validationissue)
@@ -71,7 +70,10 @@ Tags: `python3`, `python3.11`, `python3.12`, `python3.13`, and `latest` (tracks 
 ## CLI quick start
 
 ```bash
-# Discover a published geofeed for an IP via RDAP and show matches
+# Discover a published geofeed for an IP via RDAP, then search it for the same IP
+geofeed-tools query 31.133.128.1
+
+# Same RDAP discovery, but show the full lookup metadata (trace, range, etc.)
 geofeed-tools doctor 31.133.128.1
 
 # Validate a geofeed source
@@ -114,7 +116,7 @@ Every command that takes a `SOURCE` (`validate`, `dump`, `normalize`, `filter`, 
 
 Discovery failures (no geofeed URL published for the IP/prefix) exit 1 with a friendly message. The same auto-discovery works in the Python API — `GeoFeed("1.1.1.1").info()` does the right thing.
 
-The `query`, `doctor`, and `lookup` commands take a separate `QUERY` argument (always an IP or prefix). `lookup` is now equivalent to `GeoFeed(QUERY).query(QUERY)` — it shares the same discovery path as `info <IP>`.
+The `query` and `doctor` commands take a separate `QUERY` argument (always an IP or prefix). `query` also accepts a single-argument form — `geofeed-tools query 1.1.1.1` — which auto-discovers the geofeed via RDAP and searches it for that same IP, replacing the previous `lookup` subcommand.
 
 ## Output formats
 
@@ -139,9 +141,9 @@ geofeed-tools query geofeeds.csv 192.0.2.1 --format json | jq '.matches[0]'
 Exit codes follow the most useful semantic per format:
 
 - `validate` (with or without `--hook`): exit 1 when errors are found (or warnings with `--strict`), regardless of format.
-- `query` / `lookup`: exit 1 on no match in any non-JSON format; exit 0 in `json` mode (the empty `matches` array is the answer). `lookup` always exits 1 when no geofeed is discovered.
+- `query`: exit 1 on no match in any non-JSON format; exit 0 in `json` mode (the empty `matches` array is the answer). Exit 1 if an IP/prefix source can't be resolved via RDAP.
 - `doctor`: exit 1 when no geofeed is discovered or no record matches, regardless of format.
-- `dump` / `normalize` / `info`: exit 0 on success; exit 1 when an IP/prefix source can't be resolved via RDAP.
+- `dump` / `normalize` / `filter` / `info`: exit 0 on success; exit 1 when an IP/prefix source can't be resolved via RDAP.
 
 ## CLI command reference
 
@@ -232,10 +234,17 @@ geofeed-tools filter geofeeds.csv --family ipv6 --city Toronto --format grep
 ### `query`
 
 ```bash
-geofeed-tools query SOURCE QUERY [--format ...] [--all] [--longer] [-v]
+geofeed-tools query SOURCE [QUERY] [--format ...] [--all] [--longer]
+                                    [--rdap-method rdap.org|iana-bootstrap] [-v]
 ```
 
-Look up an IP or CIDR. `--all` returns every match instead of only the most specific one; `--longer` includes more-specific prefixes contained by a queried prefix.
+Look up an IP or CIDR in a geofeed.
+
+- `SOURCE` is the geofeed source (file path, URL, or IP/prefix to auto-discover via RDAP).
+- `QUERY` is the IP or CIDR to look up. It's optional when `SOURCE` is itself an IP/prefix — `geofeed-tools query 1.1.1.1` discovers the geofeed for `1.1.1.1` and searches it for the same address. This replaces the previous `lookup` subcommand.
+- `--all` returns every match instead of only the most specific one.
+- `--longer` includes more-specific prefixes contained by a queried prefix.
+- `--rdap-method` controls which RDAP method is used when discovering a geofeed from an IP/prefix `SOURCE` (`rdap.org` by default; also accepts `iana-bootstrap`).
 
 ### `doctor`
 
@@ -246,14 +255,6 @@ geofeed-tools doctor QUERY [--format ...] [--all] [--longer] [--rdap-method rdap
 Discover the published geofeed for an IP or prefix via RDAP, fetch it, and query it. The rich format renders the RDAP trace as a tree plus a "Geofeed discovery" panel (green ✓ when found, yellow ✗ when not). The plain format prints the same information as labeled lines.
 
 `--rdap-method rdap.org` (default) uses the rdap.org proxy for fast lookups. `--rdap-method iana-bootstrap` reads IANA bootstrap data and queries the selected RIR endpoint directly.
-
-### `lookup`
-
-```bash
-geofeed-tools lookup QUERY [--format ...] [--all] [--longer] [--rdap-method rdap.org|iana-bootstrap] [-v]
-```
-
-Same RDAP discovery flow as `doctor`, but the output contains only the matching geofeed records (no RDAP metadata). Internally this is equivalent to `GeoFeed(QUERY).query(QUERY)` — i.e. the same code path used when an IP/prefix is passed as a `SOURCE` to other commands. Use `lookup` when you only need the geographic answer; use `doctor` when you also want to see how the answer was discovered, including the RDAP trace and a query result that's filtered to the RIR-published address range.
 
 ### `info`
 
@@ -321,10 +322,10 @@ discovered = GeoFeed("1.1.1.1")                        # RDAP-discovers + loads
 discovered.discovery.geofeed_url                       # where it landed
 discovered.original_source                             # "1.1.1.1"
 discovered.source                                      # resolved URL after RDAP
+matches = discovered.query("1.1.1.1")                  # QueryResult — same code path as CLI: query 1.1.1.1
 
-# RDAP discovery static helpers (instance-less convenience wrappers)
+# RDAP discovery static helper (instance-less convenience wrapper for the full lookup metadata)
 diagnosis = GeoFeed.doctor("31.133.128.1")             # DoctorResult (RDAP trace + matches)
-matches = GeoFeed.lookup("31.133.128.1")               # QueryResult — same as GeoFeed(q).query(q)
 
 summary = geofeed.info()                               # GeoFeedInfo (incl. normalize preview)
 text = geofeed.info(output="text")                     # str — human-readable plain rendering
@@ -348,7 +349,10 @@ summary = await geofeed.info()
 
 # RDAP discovery does not require an instance
 diagnosis = await AsyncGeoFeed.doctor("31.133.128.1")
-matches = await AsyncGeoFeed.lookup("31.133.128.1")
+
+# Same as the CLI's ``query 1.1.1.1`` — discover then search
+discovered = await AsyncGeoFeed.from_source("1.1.1.1")
+matches = await discovered.query("1.1.1.1")
 
 # Eager-load factory
 preloaded = await AsyncGeoFeed.from_source("https://api.cloudflare.com/local-ip-ranges.csv")
@@ -401,21 +405,18 @@ await AsyncGeoFeed.from_source(source: str, *, cache_query_index: bool = True, r
 
 Mirrors `GeoFeed` but loads, parses, validates, normalizes, queries, and computes info asynchronously. CPU-bound work runs in a worker thread so the event loop stays responsive. URL fetches use `httpx` and require the `geofeed-tools[async]` extra; local file reads are offloaded via `asyncio.to_thread`. RDAP discovery for IP/prefix sources runs asynchronously via `httpx` as well. `AsyncGeoFeed` has no `auto_load` flag — use `from_source` for one-step construction + load.
 
-### Static helpers (`doctor` / `lookup`)
+### Static `doctor` helper
 
 ```python
 GeoFeed.doctor(query, *, return_all=False, include_longer=False, rdap_method="rdap.org", output="objects") -> DoctorResult | str
-GeoFeed.lookup(query, *, return_all=False, include_longer=False, rdap_method="rdap.org", output="objects") -> QueryResult | str
-
 await AsyncGeoFeed.doctor(...)
-await AsyncGeoFeed.lookup(...)
 ```
 
-`doctor()` returns the full `DoctorResult` (RDAP trace + matches, filtered to the RIR-published address range). `lookup()` is a thin wrapper around `GeoFeed(query, rdap_method=...).query(query, ...)` — same auto-discovery as passing an IP/prefix as a source — and raises `GeoFeedDiscoveryError` when no geofeed URL is published. Both helpers accept the same `rdap_method` values; `lookup` does not apply RIR range filtering.
+`doctor()` returns the full `DoctorResult` (RDAP trace + matches, filtered to the RIR-published address range). For a plain "find the geofeed for this IP and search it" use case, construct a `GeoFeed`/`AsyncGeoFeed` with the IP/prefix as the source and call `query()` on it directly — that's what the CLI's `query 1.1.1.1` form does. RDAP discovery raises `GeoFeedDiscoveryError` when no geofeed URL is published.
 
-| `rdap_method`     | Behavior                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `"rdap.org"`      | Default. Fast gateway lookups via the rdap.org proxy.                                 |
+| `rdap_method`      | Behavior                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| `"rdap.org"`       | Default. Fast gateway lookups via the rdap.org proxy.                                 |
 | `"iana-bootstrap"` | Reads IANA bootstrap data and queries the selected RIR service directly.              |
 
 Discovery walks `rdap-up` parents and supports both direct `rel=geofeed` links and remarks/comments containing `Geofeed: https://…`.
@@ -552,7 +553,7 @@ Properties: `prefixes_total`.
 | Exception                                  | Raised when                                                                       |
 | ------------------------------------------ | --------------------------------------------------------------------------------- |
 | `ValueError`                               | Invalid `output` mode or unparseable query string.                                |
-| `geofeed_tools.GeoFeedDiscoveryError`      | `GeoFeed(ip)`/`lookup()` finds no published geofeed URL for the input IP/prefix. |
+| `geofeed_tools.GeoFeedDiscoveryError`      | `GeoFeed(ip)` (or any CLI command with an IP/prefix source) finds no published geofeed URL. |
 | `geofeed_tools.loader.FetchError`          | Remote HTTP(S) or RDAP fetch failure.                                             |
 | `FileNotFoundError` / `OSError`            | Local file read failure.                                                          |
 

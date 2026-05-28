@@ -207,29 +207,6 @@ class AsyncGeoFeed(_GeoFeedBase):
         )
         return _serialize_doctor_result(result, output=output)
 
-    @classmethod
-    async def lookup(
-        cls,
-        query: str,
-        *,
-        return_all: bool = False,
-        include_longer: bool = False,
-        rdap_method: str = DEFAULT_RDAP_METHOD,
-        output: str = "objects",
-    ) -> QueryResult | str:
-        """Discover a geofeed via RDAP and return query results for an IP or prefix.
-
-        Equivalent to ``await AsyncGeoFeed.from_source(query, rdap_method=...).query(query, ...)``;
-        raises ``GeoFeedDiscoveryError`` when no geofeed URL is published.
-        """
-        geofeed = await cls.from_source(query, rdap_method=rdap_method)
-        return await geofeed.query(
-            query,
-            return_all=return_all,
-            include_longer=include_longer,
-            output=output,
-        )
-
     async def info(
         self,
         *,
