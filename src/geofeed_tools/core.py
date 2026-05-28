@@ -20,9 +20,10 @@ from .io_utils import (
     records_to_json,
     report_to_json,
 )
-from .loader import FetchError, decode_text, load_input, source_kind
+from .loader import FetchError, decode_text, is_ip_or_prefix, load_input, source_kind
 from .logging import logger
 from .models import (
+    DoctorLookup,
     DoctorResult,
     GeoFeedDiscoveryError,
     GeoFeedInfo,
@@ -33,6 +34,7 @@ from .models import (
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text_with_networks
 from .query import load_query_records, query_text
+from .rdap import resolve_geofeed_lookup
 from .validate import render_validation_text, validate_bytes
 
 T = TypeVar("T")
@@ -81,20 +83,10 @@ def _records_serializers(*, include_validation: bool) -> Mapping[str, Callable[[
     }
 
 
-def _validation_serializers() -> Mapping[str, Callable[[ValidationReport], str]]:
-    return {
-        "json": report_to_json,
-        "text": render_validation_text,
-    }
-
-
-def _serialize_query_result(result: QueryResult, *, output: str) -> QueryResult | str:
-    return _emit(
-        result,
-        output=output,
-        serializers=_QUERY_SERIALIZERS,
-        summary=f"Query result serialized: matches={len(result.matches)}",
-    )
+_VALIDATION_SERIALIZERS: Mapping[str, Callable[[ValidationReport], str]] = {
+    "json": report_to_json,
+    "text": render_validation_text,
+}
 
 
 def _serialize_doctor_result(result: DoctorResult, *, output: str) -> DoctorResult | str:
@@ -104,12 +96,6 @@ def _serialize_doctor_result(result: DoctorResult, *, output: str) -> DoctorResu
         serializers=_DOCTOR_SERIALIZERS,
         summary=f"Doctor result serialized: query={result.query} matches={len(result.matches)}",
     )
-
-
-def _build_lookup_result(result: DoctorResult) -> QueryResult:
-    if result.lookup.geofeed_url is None:
-        raise GeoFeedDiscoveryError(result.query)
-    return QueryResult(query=result.query, matches=result.matches)
 
 
 def _parse_loaded(
@@ -158,7 +144,7 @@ def _validate_loaded(
     return _emit(
         report,
         output=output,
-        serializers=_validation_serializers(),
+        serializers=_VALIDATION_SERIALIZERS,
         summary=(
             f"Validation completed: source={source} records={report.records}"
             f" errors={report.errors} warnings={report.warnings}"
@@ -298,35 +284,49 @@ def _doctor(
     return _serialize_doctor_result(result, output=output)
 
 
-def _lookup(
-    query: str,
-    *,
-    return_all: bool = False,
-    include_longer: bool = False,
-    rdap_method: str = DEFAULT_RDAP_METHOD,
-    output: str = "objects",
-) -> QueryResult | str:
-    logger.info("Running lookup command for query=%s", query)
-    result = doctor_query(
-        query,
-        return_all=return_all,
-        include_longer=include_longer,
-        rdap_method=rdap_method,
-    )
-    return _serialize_query_result(_build_lookup_result(result), output=output)
-
-
 class _GeoFeedBase:
     """Shared state, cache helpers, and CPU-bound work for sync and async geofeed APIs."""
 
-    def __init__(self, source: str, *, cache_query_index: bool = True) -> None:
+    def __init__(
+        self,
+        source: str,
+        *,
+        cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+    ) -> None:
+        self.original_source = source
         self.source = source
         self._cache_query_index = cache_query_index
+        self._rdap_method = rdap_method
+        self.discovery: DoctorLookup | None = None
         self.raw: bytes | None = None
         self.content_type: str | None = None
         self.text: str | None = None
         self._query_index_state = QueryIndexCache(enabled=cache_query_index)
         self._parsed_state = ParsedRecordsCache(enabled=True)
+
+    def _apply_resolved_lookup(self, lookup: DoctorLookup) -> str:
+        """Promote an RDAP-resolved geofeed URL into ``source`` and return it."""
+        if lookup.geofeed_url is None:
+            raise GeoFeedDiscoveryError(self.original_source)
+        self.discovery = lookup
+        self.source = lookup.geofeed_url
+        logger.info(
+            "Resolved geofeed URL via RDAP: query=%s rdap_method=%s geofeed_url=%s",
+            self.original_source,
+            self._rdap_method,
+            lookup.geofeed_url,
+        )
+        return lookup.geofeed_url
+
+    def _maybe_resolve_source_sync(self) -> None:
+        """Discover the geofeed URL via RDAP when ``source`` is an IP/prefix."""
+        if self.discovery is not None:
+            return
+        if not is_ip_or_prefix(self.source):
+            return
+        resolved = resolve_geofeed_lookup(self.source, rdap_method=self._rdap_method)
+        self._apply_resolved_lookup(resolved.lookup)
 
     def _update_loaded_content(self, raw: bytes, content_type: str | None) -> str:
         """Store loaded bytes, decode text, and invalidate caches for the new content."""
@@ -500,22 +500,45 @@ class GeoFeed(_GeoFeedBase):
         *,
         auto_load: bool = True,
         cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
     ):
-        """Initialize a geofeed source and optionally load it immediately."""
-        super().__init__(source, cache_query_index=cache_query_index)
+        """Initialize a geofeed source and optionally load it immediately.
+
+        ``source`` may be a local file path, an HTTP(S) URL, or an IP address or
+        CIDR prefix; IP/prefix inputs trigger an RDAP geofeed discovery (using
+        ``rdap_method``, default rdap.org) and the resolved URL becomes the
+        effective source.
+        """
+        super().__init__(
+            source,
+            cache_query_index=cache_query_index,
+            rdap_method=rdap_method,
+        )
         if auto_load:
             self.reload()
 
     @classmethod
-    def from_source(cls, source: str, *, cache_query_index: bool = True) -> GeoFeed:
+    def from_source(
+        cls,
+        source: str,
+        *,
+        cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+    ) -> GeoFeed:
         """Create an instance and eagerly load the source.
 
         Symmetric with ``AsyncGeoFeed.from_source``; prefer this in new code.
         """
-        return cls(source, auto_load=True, cache_query_index=cache_query_index)
+        return cls(
+            source,
+            auto_load=True,
+            cache_query_index=cache_query_index,
+            rdap_method=rdap_method,
+        )
 
     def reload(self) -> None:
         """Reload the source bytes and decoded text from disk or HTTP."""
+        self._maybe_resolve_source_sync()
         logger.info("Loading geofeed source from %s: %s", source_kind(self.source), self.source)
         raw, content_type = load_input(self.source)
         text = self._update_loaded_content(raw, content_type)
@@ -657,13 +680,14 @@ class GeoFeed(_GeoFeedBase):
     ) -> QueryResult | str:
         """Discover a geofeed via RDAP and return query results for an IP or prefix.
 
-        Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
+        Equivalent to ``GeoFeed(query, rdap_method=rdap_method).query(query, ...)``;
+        raises ``GeoFeedDiscoveryError`` when no geofeed URL is published.
         """
-        return _lookup(
+        geofeed = GeoFeed(query, rdap_method=rdap_method)
+        return geofeed.query(
             query,
             return_all=return_all,
             include_longer=include_longer,
-            rdap_method=rdap_method,
             output=output,
         )
 

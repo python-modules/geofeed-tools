@@ -195,3 +195,65 @@ def test_cli_statistics_command_removed() -> None:
     """The `statistics` CLI command no longer exists — it was merged into info."""
     result = runner.invoke(build_app(), ["statistics", FIXTURE])
     assert result.exit_code != 0
+
+
+def test_cli_info_accepts_ip_source_and_resolves_via_rdap(monkeypatch) -> None:
+    """`info <ip>` should run RDAP discovery and report on the resolved geofeed."""
+    from geofeed_tools.models import DoctorLookup
+    from geofeed_tools.rdap import ResolvedRdapLookup
+
+    geofeed_bytes = Path(FIXTURE).read_bytes()
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="192.0.2.200",
+            bootstrap_url="https://rdap.org/ip/192.0.2.200",
+            geofeed_url="https://example.com/geofeed.csv",
+        ),
+        range_start=None,
+        range_end=None,
+    )
+
+    monkeypatch.setattr(
+        "geofeed_tools.core.resolve_geofeed_lookup",
+        lambda query, *, rdap_method="rdap.org": resolved,
+    )
+    monkeypatch.setattr(
+        "geofeed_tools.core.load_input",
+        lambda source: (geofeed_bytes, "text/csv"),
+    )
+
+    result = runner.invoke(build_app(), ["info", "192.0.2.200", "--format", "json"])
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["prefixes_total"] == 3
+    assert payload["source"] == "https://example.com/geofeed.csv"
+
+
+def test_cli_info_ip_source_no_geofeed_exits_nonzero(monkeypatch) -> None:
+    """When RDAP discovery fails the CLI should exit non-zero with a friendly message."""
+    from geofeed_tools.models import DoctorLookup
+    from geofeed_tools.rdap import ResolvedRdapLookup
+
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="198.51.100.1",
+            bootstrap_url="https://rdap.org/ip/198.51.100.1",
+            geofeed_url=None,
+        ),
+        range_start=None,
+        range_end=None,
+    )
+    monkeypatch.setattr(
+        "geofeed_tools.core.resolve_geofeed_lookup",
+        lambda query, *, rdap_method="rdap.org": resolved,
+    )
+
+    result = runner.invoke(build_app(), ["info", "198.51.100.1", "--format", "json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["query"] == "198.51.100.1"
+    assert "no geofeed" in payload["error"]

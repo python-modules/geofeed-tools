@@ -176,24 +176,30 @@ def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
 
 def test_async_lookup_returns_query_result(monkeypatch) -> None:
     """AsyncGeoFeed.lookup should return a QueryResult from the discovered geofeed."""
-    from geofeed_tools.models import DoctorLookup, DoctorResult, GeofeedRecord, QueryResult
+    from geofeed_tools.models import DoctorLookup, QueryResult
+    from geofeed_tools.rdap import ResolvedRdapLookup
 
-    record_stub = GeofeedRecord(prefix="203.0.113.0/24", country="US")
+    geofeed_bytes = b"203.0.113.0/24,US,US-CA,Los Angeles,\n"
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="203.0.113.1",
+            bootstrap_url="https://rdap.org/ip/203.0.113.1",
+            geofeed_url="https://example.com/geofeed.csv",
+        ),
+        range_start=None,
+        range_end=None,
+    )
 
-    async def fake_doctor_query_async(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
-            lookup=DoctorLookup(
-                lookup_strategy="ip-address",
-                rdap_method=rdap_method,
-                rdap_query=query,
-                bootstrap_url=f"https://rdap.org/ip/{query}",
-                geofeed_url="https://example.com/geofeed.csv",
-            ),
-            matches=(record_stub,),
-        )
+    async def fake_resolve(query, *, rdap_method="rdap.org"):
+        return resolved
 
-    monkeypatch.setattr("geofeed_tools.async_core.doctor_query_async", fake_doctor_query_async)
+    async def fake_load_async(source):
+        return geofeed_bytes, "text/csv"
+
+    monkeypatch.setattr("geofeed_tools.async_core.resolve_geofeed_lookup_async", fake_resolve)
+    monkeypatch.setattr("geofeed_tools.async_core.load_input_async", fake_load_async)
 
     async def scenario() -> QueryResult:
         result = await AsyncGeoFeed.lookup("203.0.113.1")
@@ -209,21 +215,25 @@ def test_async_lookup_returns_query_result(monkeypatch) -> None:
 def test_async_lookup_raises_when_no_geofeed(monkeypatch) -> None:
     """AsyncGeoFeed.lookup should raise GeoFeedDiscoveryError when no geofeed is found."""
     from geofeed_tools import GeoFeedDiscoveryError
-    from geofeed_tools.models import DoctorLookup, DoctorResult
+    from geofeed_tools.models import DoctorLookup
+    from geofeed_tools.rdap import ResolvedRdapLookup
 
-    async def fake_doctor_query_async(query, *, return_all=False, include_longer=False, rdap_method="rdap.org"):
-        return DoctorResult(
-            query=query,
-            lookup=DoctorLookup(
-                lookup_strategy="ip-address",
-                rdap_method=rdap_method,
-                rdap_query=query,
-                bootstrap_url=f"https://rdap.org/ip/{query}",
-            ),
-            matches=(),
-        )
+    resolved = ResolvedRdapLookup(
+        lookup=DoctorLookup(
+            lookup_strategy="ip-address",
+            rdap_method="rdap.org",
+            rdap_query="203.0.113.1",
+            bootstrap_url="https://rdap.org/ip/203.0.113.1",
+            geofeed_url=None,
+        ),
+        range_start=None,
+        range_end=None,
+    )
 
-    monkeypatch.setattr("geofeed_tools.async_core.doctor_query_async", fake_doctor_query_async)
+    async def fake_resolve(query, *, rdap_method="rdap.org"):
+        return resolved
+
+    monkeypatch.setattr("geofeed_tools.async_core.resolve_geofeed_lookup_async", fake_resolve)
 
     import pytest
 

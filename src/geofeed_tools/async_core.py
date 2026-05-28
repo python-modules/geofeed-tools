@@ -5,15 +5,10 @@ from __future__ import annotations
 import asyncio
 
 from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
-from .core import (
-    _build_lookup_result,
-    _GeoFeedBase,
-    _serialize_doctor_result,
-    _serialize_query_result,
-)
+from .core import _GeoFeedBase, _serialize_doctor_result
 from .doctor import doctor_query_async
 from .info import DEFAULT_TOP_N
-from .loader import FetchError, load_input_async, source_kind
+from .loader import FetchError, is_ip_or_prefix, load_input_async, source_kind
 from .logging import logger
 from .models import (
     DoctorResult,
@@ -23,25 +18,59 @@ from .models import (
     QueryResult,
     ValidationReport,
 )
+from .rdap import resolve_geofeed_lookup_async
 
 
 class AsyncGeoFeed(_GeoFeedBase):
     """Async-native geofeed API for library consumers."""
 
-    def __init__(self, source: str, *, cache_query_index: bool = True):
-        """Initialize an async geofeed wrapper around a local path or URL."""
-        super().__init__(source, cache_query_index=cache_query_index)
+    def __init__(
+        self,
+        source: str,
+        *,
+        cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+    ):
+        """Initialize an async geofeed wrapper around a path, URL, or IP/prefix.
+
+        IP/prefix inputs trigger an RDAP discovery on first load (using
+        ``rdap_method``, default rdap.org).
+        """
+        super().__init__(
+            source,
+            cache_query_index=cache_query_index,
+            rdap_method=rdap_method,
+        )
 
     @classmethod
-    async def from_source(cls, source: str, *, cache_query_index: bool = True) -> AsyncGeoFeed:
+    async def from_source(
+        cls,
+        source: str,
+        *,
+        cache_query_index: bool = True,
+        rdap_method: str = DEFAULT_RDAP_METHOD,
+    ) -> AsyncGeoFeed:
         """Create an instance and eagerly load the source asynchronously."""
         logger.debug("Creating AsyncGeoFeed and eagerly loading source: %s", source)
-        geofeed = cls(source, cache_query_index=cache_query_index)
+        geofeed = cls(source, cache_query_index=cache_query_index, rdap_method=rdap_method)
         await geofeed.reload()
         return geofeed
 
+    async def _maybe_resolve_source_async(self) -> None:
+        """Discover the geofeed URL asynchronously when source is an IP/prefix."""
+        if self.discovery is not None:
+            return
+        if not is_ip_or_prefix(self.source):
+            return
+        resolved = await resolve_geofeed_lookup_async(
+            self.source,
+            rdap_method=self._rdap_method,
+        )
+        self._apply_resolved_lookup(resolved.lookup)
+
     async def reload(self) -> None:
         """Reload the source bytes and decoded text asynchronously."""
+        await self._maybe_resolve_source_async()
         logger.info(
             "Loading geofeed source asynchronously from %s: %s",
             source_kind(self.source),
@@ -178,8 +207,9 @@ class AsyncGeoFeed(_GeoFeedBase):
         )
         return _serialize_doctor_result(result, output=output)
 
-    @staticmethod
+    @classmethod
     async def lookup(
+        cls,
         query: str,
         *,
         return_all: bool = False,
@@ -189,16 +219,16 @@ class AsyncGeoFeed(_GeoFeedBase):
     ) -> QueryResult | str:
         """Discover a geofeed via RDAP and return query results for an IP or prefix.
 
-        Raises GeoFeedDiscoveryError when no geofeed URL is published for the query.
+        Equivalent to ``await AsyncGeoFeed.from_source(query, rdap_method=...).query(query, ...)``;
+        raises ``GeoFeedDiscoveryError`` when no geofeed URL is published.
         """
-        result = await doctor_query_async(
+        geofeed = await cls.from_source(query, rdap_method=rdap_method)
+        return await geofeed.query(
             query,
             return_all=return_all,
             include_longer=include_longer,
-            rdap_method=rdap_method,
+            output=output,
         )
-        query_result = _build_lookup_result(result)
-        return _serialize_query_result(query_result, output=output)
 
     async def info(
         self,

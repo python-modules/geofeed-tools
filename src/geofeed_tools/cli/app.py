@@ -77,7 +77,10 @@ class AddressFamily(StrEnum):
     IPV6 = "ipv6"
 
 
-SOURCE_HELP = "Local file path or HTTP(S) URL of the geofeed source"
+SOURCE_HELP = (
+    "Geofeed source: local file path, HTTP(S) URL, or IP/prefix "
+    "(auto-discovered via RDAP)"
+)
 QUERY_HELP = "IP address or CIDR prefix to look up"
 
 
@@ -124,9 +127,46 @@ def _rdap_method_option(typer):
     )
 
 
-def _strict_option(typer, *, help_text: str):
-    """Shared --strict option for validate/hook commands."""
-    return typer.Option(False, "--strict", help=help_text)
+def _strict_option(typer):
+    """Shared --strict option for the validate command (plain + hook modes)."""
+    return typer.Option(
+        False,
+        "--strict",
+        help="Fail on warnings as well as errors",
+    )
+
+
+def _load_geofeed(source: str, output_format: OutputFormat, typer, **kwargs) -> GeoFeed:
+    """Construct a GeoFeed, rendering a friendly message on RDAP-discovery failure.
+
+    Accepts the same ``source`` shapes as ``GeoFeed`` itself (file path, URL, or
+    IP/prefix). When the IP/prefix discovery cannot find a published geofeed,
+    emits a format-appropriate error and exits 1 instead of dumping a traceback.
+    """
+    try:
+        return GeoFeed(source, **kwargs)
+    except GeoFeedDiscoveryError as exc:
+        _emit_source_discovery_error(exc, output_format)
+        raise typer.Exit(code=1) from exc
+
+
+def _emit_source_discovery_error(exc: GeoFeedDiscoveryError, output_format: OutputFormat) -> None:
+    """Emit a discovery-failure message when an IP/prefix source can't be resolved."""
+    if output_format is OutputFormat.JSON:
+        import json
+
+        print(json.dumps({"query": exc.query, "error": str(exc)}, indent=2))
+        return
+    if output_format is OutputFormat.GREP:
+        # grep mode is silent on failure; the caller reads the exit code.
+        return
+    if output_format is OutputFormat.PLAIN:
+        print(str(exc), file=sys.stderr)
+        return
+    from rich.console import Console
+    from rich.text import Text
+
+    Console(stderr=True).print(Text(str(exc), style="bold yellow"))
 
 
 def build_app():
@@ -142,7 +182,6 @@ def build_app():
     _register_doctor_command(app, _typer)
     _register_lookup_command(app, _typer)
     _register_info_command(app, _typer)
-    _register_hook_command(app, _typer)
     return app
 
 
@@ -167,7 +206,7 @@ def _register_dump_command(app, typer) -> None:
     ) -> None:
         """Dump geofeed records in the chosen format."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
+        geofeed = _load_geofeed(source, output_format, typer)
         include_validation = not no_validation
 
         records = geofeed.parse(
@@ -191,7 +230,20 @@ def _register_validate_command(app, typer) -> None:
     def validate_command(
         source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
-        strict: bool = _strict_option(typer, help_text="Fail on warnings as well as errors"),
+        strict: bool = _strict_option(typer),
+        hook: bool = typer.Option(
+            False,
+            "--hook",
+            help=(
+                "Render hook-style output for CI/CD integration "
+                "(machine-readable summary + issues on stderr)"
+            ),
+        ),
+        show_issues: bool = typer.Option(
+            True,
+            "--show-issues/--no-issues",
+            help="In --hook mode, print individual validation issues",
+        ),
         check_aggregation: bool = typer.Option(
             False,
             "--check-aggregation",
@@ -209,9 +261,9 @@ def _register_validate_command(app, typer) -> None:
         ),
         verbose: int = _verbose_option(typer),
     ) -> None:
-        """Validate a geofeed source and report issues."""
+        """Validate a geofeed source and report issues (use --hook for CI/CD integration)."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
+        geofeed = _load_geofeed(source, output_format, typer)
         report = geofeed.validate(
             check_sort=not no_sort_check,
             check_content_type=not no_content_type_check,
@@ -220,7 +272,16 @@ def _register_validate_command(app, typer) -> None:
         )
         assert isinstance(report, ValidationReport)
 
-        render_validation(report, format=output_format.value)
+        if hook:
+            render_hook(
+                report,
+                source,
+                format=output_format.value,
+                show_issues=show_issues,
+                strict=strict,
+            )
+        else:
+            render_validation(report, format=output_format.value)
 
         if report.errors > 0 or (strict and report.warnings > 0):
             raise typer.Exit(code=1)
@@ -248,7 +309,7 @@ def _register_normalize_command(app, typer) -> None:
     ) -> None:
         """Normalize geofeed records and emit them in the chosen format."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
+        geofeed = _load_geofeed(source, output_format, typer)
 
         if output_file:
             csv_payload = geofeed.normalize(
@@ -334,7 +395,7 @@ def _register_filter_command(app, typer) -> None:
     ) -> None:
         """Filter geofeed records by one or more fields (combined with AND)."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
+        geofeed = _load_geofeed(source, output_format, typer)
         records = geofeed.filter(
             prefix=prefix,
             country=country,
@@ -369,7 +430,7 @@ def _register_query_command(app, typer) -> None:
     ) -> None:
         """Query a geofeed by IP or prefix."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source, cache_query_index=False)
+        geofeed = _load_geofeed(source, output_format, typer, cache_query_index=False)
         result = geofeed.query(
             query,
             return_all=show_all,
@@ -428,18 +489,13 @@ def _register_lookup_command(app, typer) -> None:
     ) -> None:
         """Discover a published geofeed via RDAP and query it by IP or prefix."""
         configure_cli_structlog(verbose)
-        try:
-            result = GeoFeed.lookup(
-                query,
-                return_all=show_all,
-                include_longer=include_longer,
-                rdap_method=rdap_method,
-                output="objects",
-            )
-        except GeoFeedDiscoveryError as exc:
-            _emit_discovery_error(exc, output_format)
-            raise typer.Exit(code=1) from exc
-
+        geofeed = _load_geofeed(query, output_format, typer, rdap_method=rdap_method)
+        result = geofeed.query(
+            query,
+            return_all=show_all,
+            include_longer=include_longer,
+            output="objects",
+        )
         assert isinstance(result, QueryResult)
         render_query(result, format=output_format.value, source_label="Lookup")
 
@@ -447,27 +503,6 @@ def _register_lookup_command(app, typer) -> None:
         # mode (the discovery half of the workflow is the point of the command).
         if not result.matches:
             raise typer.Exit(code=1)
-
-
-def _emit_discovery_error(exc: GeoFeedDiscoveryError, output_format: OutputFormat) -> None:
-    """Emit a discovery-failure message in a format-appropriate way."""
-    if output_format is OutputFormat.JSON:
-        from geofeed_tools.io_utils import query_to_json
-
-        # Synthesise an empty QueryResult so the JSON shape is stable.
-        empty = QueryResult(query=exc.query, matches=())
-        print(query_to_json(empty))
-        return
-    if output_format is OutputFormat.GREP:
-        # grep mode is silent on failure; the caller reads the exit code.
-        return
-    if output_format is OutputFormat.PLAIN:
-        print(str(exc), file=sys.stderr)
-        return
-    from rich.console import Console
-    from rich.text import Text
-
-    Console(stderr=True).print(Text(str(exc), style="bold yellow"))
 
 
 def _register_info_command(app, typer) -> None:
@@ -487,42 +522,10 @@ def _register_info_command(app, typer) -> None:
     ) -> None:
         """Show detailed geofeed info: counts, geography, per-country breakdown, normalize preview."""
         configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
+        geofeed = _load_geofeed(source, output_format, typer)
         info = geofeed.info(top_n=top_n, output="objects")
         assert isinstance(info, GeoFeedInfo)
         render_info(info, format=output_format.value)
-
-
-def _register_hook_command(app, typer) -> None:
-    """Register the hook command."""
-
-    @app.command("hook")
-    def hook_command(
-        source: str = _source_argument(typer),
-        output_format: OutputFormat = _format_option(typer),
-        strict: bool = _strict_option(typer, help_text="Fail when warnings are present"),
-        show_issues: bool = typer.Option(
-            True,
-            "--show-issues/--no-issues",
-            help="Print individual validation issues",
-        ),
-        verbose: int = _verbose_option(typer),
-    ) -> None:
-        """Run validation and return hook-friendly exit codes."""
-        configure_cli_structlog(verbose)
-        geofeed = GeoFeed(source)
-        report = geofeed.validate(output="objects")
-        assert isinstance(report, ValidationReport)
-
-        failed = render_hook(
-            report,
-            source,
-            format=output_format.value,
-            show_issues=show_issues,
-            strict=strict,
-        )
-        if failed:
-            raise typer.Exit(code=1)
 
 
 def main() -> None:

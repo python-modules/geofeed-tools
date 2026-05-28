@@ -1,10 +1,11 @@
 # geofeed-tools
 
-`geofeed-tools` is a Python library and CLI for working with [RFC 8805](https://datatracker.ietf.org/doc/html/rfc8805) geofeeds. It parses, validates, normalizes, queries, and summarizes geofeeds from local files and HTTP(S) sources, and discovers published geofeeds for an IP/prefix via RDAP.
+`geofeed-tools` is a Python library and CLI for working with [RFC 8805](https://datatracker.ietf.org/doc/html/rfc8805) geofeeds. It parses, validates, normalizes, queries, and summarizes geofeeds from local files, HTTP(S) sources, **or directly from an IP address / CIDR prefix** — in the IP/prefix case the geofeed URL is auto-discovered via RDAP before the operation runs.
 
 - [geofeed-tools](#geofeed-tools)
   - [Install](#install)
   - [CLI quick start](#cli-quick-start)
+  - [Source argument: file, URL, or IP/prefix](#source-argument-file-url-or-ipprefix)
   - [Output formats](#output-formats)
   - [CLI command reference](#cli-command-reference)
     - [`validate`](#validate)
@@ -15,7 +16,6 @@
     - [`doctor`](#doctor)
     - [`lookup`](#lookup)
     - [`info`](#info)
-    - [`hook`](#hook)
   - [Python API](#python-api)
     - [Python API quick start](#python-api-quick-start)
     - [`GeoFeed` class](#geofeed-class)
@@ -77,8 +77,10 @@ geofeed-tools doctor 31.133.128.1
 # Validate a geofeed source
 geofeed-tools validate geofeeds.csv
 
-# Show detailed info (counts, geography, per-country breakdown, normalize preview)
+# Show detailed info — works against a file, a URL, OR an IP/prefix (auto-RDAP-discovered)
 geofeed-tools info geofeeds.csv
+geofeed-tools info 31.133.128.1            # discovers the geofeed via RDAP, then info
+geofeed-tools info https://example.com/geofeed.csv
 
 # Query a geofeed for an IP or prefix
 geofeed-tools query geofeeds.csv 192.0.2.200
@@ -89,8 +91,8 @@ geofeed-tools filter geofeeds.csv --country CA --family ipv4 --prefix-length 24 
 # Normalize the feed and write canonical CSV to a file
 geofeed-tools normalize geofeeds.csv --output normalized.csv
 
-# Validate in CI / pre-commit mode (machine-friendly exit codes)
-geofeed-tools hook geofeeds.csv --strict
+# Validate in CI / pre-commit mode (machine-friendly exit codes + machine-readable output)
+geofeed-tools validate geofeeds.csv --hook --strict
 ```
 
 Per-command help is always available:
@@ -99,6 +101,20 @@ Per-command help is always available:
 geofeed-tools --help
 geofeed-tools doctor --help
 ```
+
+## Source argument: file, URL, or IP/prefix
+
+Every command that takes a `SOURCE` (`validate`, `dump`, `normalize`, `filter`, `query`, `info`) accepts three input shapes:
+
+| Input                                         | Behavior                                                                                  |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Local file path (`./geofeeds.csv`)            | Read from disk.                                                                           |
+| HTTP(S) URL (`https://example.com/foo.csv`)   | Fetch and use directly.                                                                   |
+| IP address or CIDR prefix (`1.1.1.1`, `2001:db8::/32`) | RDAP-discover the published geofeed URL (rdap.org by default), then load and run on it.  |
+
+Discovery failures (no geofeed URL published for the IP/prefix) exit 1 with a friendly message. The same auto-discovery works in the Python API — `GeoFeed("1.1.1.1").info()` does the right thing.
+
+The `query`, `doctor`, and `lookup` commands take a separate `QUERY` argument (always an IP or prefix). `lookup` is now equivalent to `GeoFeed(QUERY).query(QUERY)` — it shares the same discovery path as `info <IP>`.
 
 ## Output formats
 
@@ -122,31 +138,34 @@ geofeed-tools query geofeeds.csv 192.0.2.1 --format json | jq '.matches[0]'
 
 Exit codes follow the most useful semantic per format:
 
-- `validate` / `hook`: exit 1 when errors are found (or warnings with `--strict`), regardless of format.
+- `validate` (with or without `--hook`): exit 1 when errors are found (or warnings with `--strict`), regardless of format.
 - `query` / `lookup`: exit 1 on no match in any non-JSON format; exit 0 in `json` mode (the empty `matches` array is the answer). `lookup` always exits 1 when no geofeed is discovered.
 - `doctor`: exit 1 when no geofeed is discovered or no record matches, regardless of format.
-- `dump` / `normalize` / `info`: exit 0 on success.
+- `dump` / `normalize` / `info`: exit 0 on success; exit 1 when an IP/prefix source can't be resolved via RDAP.
 
 ## CLI command reference
 
 ### `validate`
 
 ```bash
-geofeed-tools validate SOURCE [--format ...] [--strict] [--check-aggregation] [--no-sort-check] [--no-content-type-check] [-v]
+geofeed-tools validate SOURCE [--format ...] [--strict] [--hook] [--show-issues/--no-issues]
+                              [--check-aggregation] [--no-sort-check] [--no-content-type-check] [-v]
 ```
 
-Validate a geofeed and report issues.
+Validate a geofeed and report issues. Add `--hook` for CI/CD integration — it renders machine-friendly hook output (issues table / status line on stderr in rich mode, `path:line:severity:code:message` rows on stdout in grep mode) while keeping the same exit-code policy.
 
-| Option                    | Default | Meaning                                                          |
-| ------------------------- | ------- | ---------------------------------------------------------------- |
-| `--format`, `-f`          | `rich`  | Output format.                                                   |
-| `--strict`                | off     | Exit 1 when warnings are present, not just errors.               |
-| `--check-aggregation`     | off     | Warn for prefixes that could be safely aggregated.               |
-| `--no-sort-check`         | off     | Disable sort-order warnings.                                     |
-| `--no-content-type-check` | off     | Disable `Content-Type` warnings for URL sources.                 |
-| `-v`, `--verbose`         | `0`     | Increase log verbosity (`-v` INFO, `-vv` DEBUG, `-vvv` TRACE).   |
+| Option                    | Default | Meaning                                                                       |
+| ------------------------- | ------- | ----------------------------------------------------------------------------- |
+| `--format`, `-f`          | `rich`  | Output format.                                                                |
+| `--strict`                | off     | Exit 1 when warnings are present, not just errors.                            |
+| `--hook`                  | off     | CI-friendly rendering (status line + issues), same exit codes.                |
+| `--show-issues`/`--no-issues` | on  | In `--hook` mode, print individual validation issues. Ignored otherwise.      |
+| `--check-aggregation`     | off     | Warn for prefixes that could be safely aggregated.                            |
+| `--no-sort-check`         | off     | Disable sort-order warnings.                                                  |
+| `--no-content-type-check` | off     | Disable `Content-Type` warnings for URL sources.                              |
+| `-v`, `--verbose`         | `0`     | Increase log verbosity (`-v` INFO, `-vv` DEBUG, `-vvv` TRACE).                |
 
-`--format grep` emits one line per issue in `path:line:severity:code:message` form, identical to GCC/grep style for easy pipeline use.
+`--format grep` emits one line per issue in `path:line:severity:code:message` form, identical to GCC/grep style for easy pipeline use. The standalone `hook` subcommand was removed in 0.2.0 — use `validate --hook` instead.
 
 ### `dump`
 
@@ -234,7 +253,7 @@ Discover the published geofeed for an IP or prefix via RDAP, fetch it, and query
 geofeed-tools lookup QUERY [--format ...] [--all] [--longer] [--rdap-method rdap.org|iana-bootstrap] [-v]
 ```
 
-Same RDAP discovery flow as `doctor`, but the output contains only the matching geofeed records (no RDAP metadata). Use `lookup` when you only need the geographic answer; use `doctor` when you also want to see how the answer was discovered.
+Same RDAP discovery flow as `doctor`, but the output contains only the matching geofeed records (no RDAP metadata). Internally this is equivalent to `GeoFeed(QUERY).query(QUERY)` — i.e. the same code path used when an IP/prefix is passed as a `SOURCE` to other commands. Use `lookup` when you only need the geographic answer; use `doctor` when you also want to see how the answer was discovered, including the RDAP trace and a query result that's filtered to the RIR-published address range.
 
 ### `info`
 
@@ -242,7 +261,7 @@ Same RDAP discovery flow as `doctor`, but the output contains only the matching 
 geofeed-tools info SOURCE [--format ...] [--top-n N] [-v]
 ```
 
-Comprehensive geofeed analysis. The command runs the feed through parsing, validation, and a virtual normalize pass and reports:
+Comprehensive geofeed analysis. `SOURCE` may be a file, URL, or IP/prefix (RDAP auto-discovered). The command runs the feed through parsing, validation, and a virtual normalize pass and reports:
 
 - **Overview** — total prefixes, unique prefixes, duplicates, errors and warnings.
 - **/24- and /48-equivalents** — total address coverage measured as `sum_addresses // 256` for IPv4 and `sum_addresses // 2^80` for IPv6. Prefixes shorter than the divisor contribute whole multiples (a /23 = 2 /24s); fragments smaller than the divisor (a lone /25) round down to zero.
@@ -251,6 +270,8 @@ Comprehensive geofeed analysis. The command runs the feed through parsing, valid
 - **Prefix-length histograms** — sorted ascending for IPv4 and IPv6.
 - **Top regions and top cities** — sized by `--top-n` (default 20).
 - **If normalized** — projected prefix counts, /24- and /48-equivalents, the number of invalid rows that would be dropped, and the number of rows merged by aggregation/dedupe.
+
+The library `info()` method also exposes the plain and grep renderings directly via `output="text"` and `output="grep"`, so consumers without rich installed can produce the same human/machine output as the CLI.
 
 The `grep` format emits one `key=value` line per metric, including the normalize preview and ranked keys for top regions/cities:
 
@@ -267,14 +288,6 @@ normalized.aggregated=1
 top_city.1.name="San Francisco"
 top_city.1.count=2
 ```
-
-### `hook`
-
-```bash
-geofeed-tools hook SOURCE [--format ...] [--strict] [--show-issues/--no-issues] [-v]
-```
-
-Hook-friendly validation: writes a colorized panel + summary to stderr in rich mode, an emitted `path:line:severity:code:message` list in grep mode (stdout for easy piping), and exits 1 on errors (or warnings with `--strict`).
 
 ## Python API
 
@@ -303,11 +316,19 @@ canada = geofeed.filter(country="CA")
 narrow = geofeed.filter(country="CA", region="CA-ON", prefix="192.0.2.0/24")
 small_v4 = geofeed.filter(family="ipv4", prefix_length=24, include_longer=True)
 
-# RDAP discovery is a static helper — no instance required
-diagnosis = GeoFeed.doctor("31.133.128.1")             # DoctorResult
-matches = GeoFeed.lookup("31.133.128.1")               # QueryResult
+# IP/prefix source: GeoFeed auto-discovers the published geofeed via RDAP
+discovered = GeoFeed("1.1.1.1")                        # RDAP-discovers + loads
+discovered.discovery.geofeed_url                       # where it landed
+discovered.original_source                             # "1.1.1.1"
+discovered.source                                      # resolved URL after RDAP
+
+# RDAP discovery static helpers (instance-less convenience wrappers)
+diagnosis = GeoFeed.doctor("31.133.128.1")             # DoctorResult (RDAP trace + matches)
+matches = GeoFeed.lookup("31.133.128.1")               # QueryResult — same as GeoFeed(q).query(q)
 
 summary = geofeed.info()                               # GeoFeedInfo (incl. normalize preview)
+text = geofeed.info(output="text")                     # str — human-readable plain rendering
+grep = geofeed.info(output="grep")                     # str — key=value lines
 
 # Eager constructor alternative (symmetric with AsyncGeoFeed.from_source)
 loaded = GeoFeed.from_source("geofeeds.csv")
@@ -336,17 +357,22 @@ preloaded = await AsyncGeoFeed.from_source("https://api.cloudflare.com/local-ip-
 ### `GeoFeed` class
 
 ```python
-GeoFeed(source: str, *, auto_load: bool = True, cache_query_index: bool = True)
-GeoFeed.from_source(source: str, *, cache_query_index: bool = True) -> GeoFeed
+GeoFeed(source: str, *, auto_load: bool = True, cache_query_index: bool = True, rdap_method: str = "rdap.org")
+GeoFeed.from_source(source: str, *, cache_query_index: bool = True, rdap_method: str = "rdap.org") -> GeoFeed
 ```
 
-| Argument            | Default | Meaning                                                                            |
-| ------------------- | ------- | ---------------------------------------------------------------------------------- |
-| `source`            | —       | Local file path or HTTP(S) URL.                                                    |
-| `auto_load`         | `True`  | If `True`, load the source immediately; otherwise lazily on first operation.       |
-| `cache_query_index` | `True`  | Cache the parsed query index between `query()` calls for repeated lookups.         |
+| Argument            | Default       | Meaning                                                                                       |
+| ------------------- | ------------- | --------------------------------------------------------------------------------------------- |
+| `source`            | —             | Local file path, HTTP(S) URL, or IP/prefix (auto-RDAP-discovered).                            |
+| `auto_load`         | `True`        | If `True`, load the source immediately; otherwise lazily on first operation.                  |
+| `cache_query_index` | `True`        | Cache the parsed query index between `query()` calls for repeated lookups.                    |
+| `rdap_method`       | `"rdap.org"`  | RDAP discovery method used when `source` is an IP/prefix. `"iana-bootstrap"` is also accepted. |
 
-After loading: `source`, `raw`, `content_type`, and `text` are populated.
+When `source` is an IP or CIDR prefix, the first load triggers an RDAP discovery. The resolved geofeed URL is then loaded and used for every operation; subsequent `reload()` calls reuse the discovered URL without re-resolving. Raises `GeoFeedDiscoveryError` if no geofeed URL is published for the input.
+
+After loading: `source`, `raw`, `content_type`, and `text` are populated. When discovery happened, `original_source` holds the input IP/prefix and `discovery: DoctorLookup` holds the full RDAP metadata. For file/URL sources, `original_source == source` and `discovery is None`.
+
+Parsed records (and their networks) are also cached on the instance and shared across `parse()`, `filter()`, `info()`, etc.; the cache is invalidated by `reload()`.
 
 Methods (every method also accepts `output="objects"` (default), `"json"`, and, where applicable, `"csv"` or `"text"`):
 
@@ -358,7 +384,7 @@ Methods (every method also accepts `output="objects"` (default), `"json"`, and, 
 | `normalize(*, uppercase, sort, aggregate, dedupe, fix_host_bits)` | `list[GeofeedRecord] \| str` | Canonical normalized records.                                                               |
 | `query(query, *, return_all, include_longer)` | `QueryResult \| str`                  | Longest-prefix match (default) or all matches.                                              |
 | `filter(*, prefix=None, country=None, region=None, city=None, postal_code=None, family=None, prefix_length=None, include_longer=False)` | `list[GeofeedRecord] \| str` | Records matching every supplied predicate (AND). See [`filter` CLI section](#filter) for semantics. |
-| `info(*, top_n=20)`                          | `GeoFeedInfo \| str`                  | Detailed breakdowns: counts, geography, per-country prefixes/slash counts, length histogram, top regions/cities, and a normalize preview. |
+| `info(*, top_n=20)`                          | `GeoFeedInfo \| str`                  | Detailed breakdowns: counts, geography, per-country prefixes/slash counts, length histogram, top regions/cities, and a normalize preview. Also supports `output="text"` (human plain text) and `output="grep"` (`key=value` lines) in addition to `"objects"` / `"json"`. |
 
 Behavior notes:
 
@@ -369,11 +395,11 @@ Behavior notes:
 ### `AsyncGeoFeed` class
 
 ```python
-AsyncGeoFeed(source: str, *, cache_query_index: bool = True)
-await AsyncGeoFeed.from_source(source: str, *, cache_query_index: bool = True) -> AsyncGeoFeed
+AsyncGeoFeed(source: str, *, cache_query_index: bool = True, rdap_method: str = "rdap.org")
+await AsyncGeoFeed.from_source(source: str, *, cache_query_index: bool = True, rdap_method: str = "rdap.org") -> AsyncGeoFeed
 ```
 
-Mirrors `GeoFeed` but loads, parses, validates, normalizes, queries, and computes info asynchronously. CPU-bound work runs in a worker thread so the event loop stays responsive. URL fetches use `httpx` and require the `geofeed-tools[async]` extra; local file reads are offloaded via `asyncio.to_thread`. `AsyncGeoFeed` has no `auto_load` flag — use `from_source` for one-step construction + load.
+Mirrors `GeoFeed` but loads, parses, validates, normalizes, queries, and computes info asynchronously. CPU-bound work runs in a worker thread so the event loop stays responsive. URL fetches use `httpx` and require the `geofeed-tools[async]` extra; local file reads are offloaded via `asyncio.to_thread`. RDAP discovery for IP/prefix sources runs asynchronously via `httpx` as well. `AsyncGeoFeed` has no `auto_load` flag — use `from_source` for one-step construction + load.
 
 ### Static helpers (`doctor` / `lookup`)
 
@@ -385,7 +411,7 @@ await AsyncGeoFeed.doctor(...)
 await AsyncGeoFeed.lookup(...)
 ```
 
-`doctor()` returns the full `DoctorResult` (RDAP trace + matches). `lookup()` returns only the `QueryResult` and raises `GeoFeedDiscoveryError` when no geofeed URL is published.
+`doctor()` returns the full `DoctorResult` (RDAP trace + matches, filtered to the RIR-published address range). `lookup()` is a thin wrapper around `GeoFeed(query, rdap_method=...).query(query, ...)` — same auto-discovery as passing an IP/prefix as a source — and raises `GeoFeedDiscoveryError` when no geofeed URL is published. Both helpers accept the same `rdap_method` values; `lookup` does not apply RIR range filtering.
 
 | `rdap_method`     | Behavior                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------- |
@@ -523,12 +549,12 @@ Properties: `prefixes_total`.
 
 ### Error handling
 
-| Exception                                  | Raised when                                                          |
-| ------------------------------------------ | -------------------------------------------------------------------- |
-| `ValueError`                               | Invalid `output` mode or unparseable query string.                   |
-| `geofeed_tools.GeoFeedDiscoveryError`      | `lookup()` finds no published geofeed URL.                           |
-| `geofeed_tools.loader.FetchError`          | Remote HTTP(S) or RDAP fetch failure.                                |
-| `FileNotFoundError` / `OSError`            | Local file read failure.                                             |
+| Exception                                  | Raised when                                                                       |
+| ------------------------------------------ | --------------------------------------------------------------------------------- |
+| `ValueError`                               | Invalid `output` mode or unparseable query string.                                |
+| `geofeed_tools.GeoFeedDiscoveryError`      | `GeoFeed(ip)`/`lookup()` finds no published geofeed URL for the input IP/prefix. |
+| `geofeed_tools.loader.FetchError`          | Remote HTTP(S) or RDAP fetch failure.                                             |
+| `FileNotFoundError` / `OSError`            | Local file read failure.                                                          |
 
 ```python
 from geofeed_tools import GeoFeed
@@ -543,7 +569,7 @@ except FetchError as exc:
 
 ## GitHub Actions integration
 
-The `hook` command is designed as a CI quality gate. This repository publishes a reusable workflow at [.github/workflows/geofeed-validation.yml](.github/workflows/geofeed-validation.yml) and a caller example at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml).
+The `validate --hook` command is designed as a CI quality gate. This repository publishes a reusable workflow at [.github/workflows/geofeed-validation.yml](.github/workflows/geofeed-validation.yml) and a caller example at [examples/github-actions/geofeed-validation.yml](examples/github-actions/geofeed-validation.yml).
 
 Minimal caller workflow:
 

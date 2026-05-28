@@ -2,14 +2,21 @@
 
 ## PENDING - 0.2.0
 
+Major changes:
+
+- Pretty format CLI output by default with colours and better messages
+- Add "--format" flag for CLI commands to choose between rich/plain/grep/json
+- Add filter API/CLI command
+- Remove `hook` CLI command - merged into `validate` command.
+- Accept an IP address or prefix instead of file/URL to load geofeed for. If an IP/prefix is provided RDAP will be used to discover the geofeed file.
+
+Other changes:
+
 - Misc small fixups
 - Refactor things to reduce complexity
 - Drop CLI requirement for tabulate and use rich for formatting (already pulled in from tabulate)
-- Pretty format CLI output by default with colours and better messages
-- Add "--format" flag for CLI commands to choose between rich/plain/grep/json
 - Update info command to provide actual useful information and statistics
 - Default to showing help message without args/command provided
-- Add filter API/CLI command
 - Fix caching across subsequent method calls
 - Split renderer for readability
 

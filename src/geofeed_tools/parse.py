@@ -12,29 +12,12 @@ from .parsing import iter_records
 from .validate import validate_bytes
 
 
-def parse_text(text: str) -> list[GeofeedRecord]:
-    """Parse text into geofeed records, skipping malformed rows."""
-    records, _networks = _parse_text_impl(text, include_networks=False)
-    return records
-
-
 def parse_text_with_networks(
     text: str,
 ) -> tuple[list[GeofeedRecord], list[Network | None]]:
-    """Parse text into records and carry parsed network info forward."""
-    records, networks = _parse_text_impl(text, include_networks=True)
-    assert networks is not None
-    return records, networks
-
-
-def _parse_text_impl(
-    text: str,
-    *,
-    include_networks: bool,
-) -> tuple[list[GeofeedRecord], list[Network | None] | None]:
-    """Parse text into geofeed records with optional parsed-network metadata."""
+    """Parse text into records, carrying the parsed network alongside each row."""
     records: list[GeofeedRecord] = []
-    networks: list[Network | None] | None = [] if include_networks else None
+    networks: list[Network | None] = []
     skipped_csv_errors = 0
     skipped_missing_prefix = 0
     for line in iter_records(text, strict=False):
@@ -65,8 +48,7 @@ def _parse_text_impl(
                 line=line.lineno,
             )
         )
-        if networks is not None:
-            networks.append(line.network)
+        networks.append(line.network)
     logger.debug(
         "Parsed raw geofeed text into records: records=%d skipped_csv_errors=%d skipped_missing_prefix=%d",
         len(records),

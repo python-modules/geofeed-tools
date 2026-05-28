@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import urllib.error
 import urllib.request
 
@@ -29,12 +30,27 @@ class FetchError(Exception):
 
 def source_kind(source: str) -> str:
     """Return a human-readable source kind for logging."""
-    return "URL" if is_url(source) else "file"
+    if is_url(source):
+        return "URL"
+    if is_ip_or_prefix(source):
+        return "IP/prefix"
+    return "file"
 
 
 def is_url(source: str) -> bool:
     """Return True when a source string looks like an HTTP URL."""
     return source.startswith(URL_SCHEMES)
+
+
+def is_ip_or_prefix(source: str) -> bool:
+    """Return True when ``source`` parses as an IP address or CIDR prefix."""
+    if is_url(source):
+        return False
+    try:
+        ipaddress.ip_network(source, strict=False)
+    except (ValueError, TypeError):
+        return False
+    return True
 
 
 def load_input(source: str) -> tuple[bytes, str | None]:
