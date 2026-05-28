@@ -70,6 +70,13 @@ class RdapMethod(StrEnum):
     IANA_BOOTSTRAP = IANA_BOOTSTRAP_METHOD
 
 
+class AddressFamily(StrEnum):
+    """Filterable IP address families exposed by the filter command."""
+
+    IPV4 = "ipv4"
+    IPV6 = "ipv6"
+
+
 SOURCE_HELP = "Local file path or HTTP(S) URL of the geofeed source"
 QUERY_HELP = "IP address or CIDR prefix to look up"
 
@@ -121,10 +128,11 @@ def build_app():
     """Build and return the Typer application."""
     import typer as _typer
 
-    app = _typer.Typer(help="GeoFeed tools CLI", no_args_is_help=True)
+    app = _typer.Typer(help="GeoFeed tools CLI")
     _register_dump_command(app, _typer)
     _register_validate_command(app, _typer)
     _register_normalize_command(app, _typer)
+    _register_filter_command(app, _typer)
     _register_query_command(app, _typer)
     _register_doctor_command(app, _typer)
     _register_lookup_command(app, _typer)
@@ -267,6 +275,81 @@ def _register_normalize_command(app, typer) -> None:
             records,
             format=output_format.value,
             title=f"Normalized records ({len(records)})",
+            include_validation=False,
+        )
+
+
+def _register_filter_command(app, typer) -> None:
+    """Register the filter command."""
+
+    @app.command("filter")
+    def filter_command(
+        source: str = _source_argument(typer),
+        output_format: OutputFormat = _format_option(typer),
+        prefix: str | None = typer.Option(
+            None,
+            "--prefix",
+            help="Filter by CIDR prefix (exact unless --longer is set)",
+        ),
+        country: str | None = typer.Option(
+            None,
+            "--country",
+            help="Filter by ISO 3166-1 alpha-2 country code (case-insensitive)",
+        ),
+        region: str | None = typer.Option(
+            None,
+            "--region",
+            help="Filter by ISO 3166-2 subdivision code (case-insensitive)",
+        ),
+        city: str | None = typer.Option(
+            None,
+            "--city",
+            help="Filter by city (case-insensitive)",
+        ),
+        postal_code: str | None = typer.Option(
+            None,
+            "--postal-code",
+            help="Filter by postal code (case-insensitive)",
+        ),
+        family: AddressFamily | None = typer.Option(
+            None,
+            "--family",
+            help="Restrict to one IP address family",
+        ),
+        prefix_length: int | None = typer.Option(
+            None,
+            "--prefix-length",
+            help="Filter by prefix length (exact unless --longer is set)",
+        ),
+        include_longer: bool = typer.Option(
+            False,
+            "--longer",
+            help=(
+                "Match --prefix subnets contained by the supplied CIDR and "
+                "--prefix-length values >= the supplied length"
+            ),
+        ),
+        verbose: int = _verbose_option(typer),
+    ) -> None:
+        """Filter geofeed records by one or more fields (combined with AND)."""
+        configure_cli_structlog(verbose)
+        geofeed = GeoFeed(source)
+        records = geofeed.filter(
+            prefix=prefix,
+            country=country,
+            region=region,
+            city=city,
+            postal_code=postal_code,
+            family=family.value if family is not None else None,
+            prefix_length=prefix_length,
+            include_longer=include_longer,
+            output="objects",
+        )
+        assert isinstance(records, list)
+        render_records(
+            records,
+            format=output_format.value,
+            title=f"Filtered records ({len(records)})",
             include_validation=False,
         )
 
@@ -446,10 +529,17 @@ def _register_hook_command(app, typer) -> None:
 
 
 def main() -> None:
-    """CLI entrypoint used by project scripts."""
+    """CLI entrypoint used by project scripts.
+
+    With no arguments, prints the help text and exits 0 (same as ``--help``)
+    instead of typer's default "Missing command" error.
+    """
     _check_cli_deps()
     app = build_app()
-    app()
+    argv = sys.argv[1:]
+    if not argv:
+        argv = ["--help"]
+    app(argv, standalone_mode=True)
 
 
 # Re-exported for `from geofeed_tools.cli.app import doctor_to_json` if needed.

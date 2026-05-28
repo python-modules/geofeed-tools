@@ -10,6 +10,7 @@
     - [`validate`](#validate)
     - [`dump`](#dump)
     - [`normalize`](#normalize)
+    - [`filter`](#filter)
     - [`query`](#query)
     - [`doctor`](#doctor)
     - [`lookup`](#lookup)
@@ -81,6 +82,9 @@ geofeed-tools info geofeeds.csv
 
 # Query a geofeed for an IP or prefix
 geofeed-tools query geofeeds.csv 192.0.2.200
+
+# Filter records by country, region, prefix length, etc. (combinable)
+geofeed-tools filter geofeeds.csv --country CA --family ipv4 --prefix-length 24 --longer
 
 # Normalize the feed and write canonical CSV to a file
 geofeed-tools normalize geofeeds.csv --output normalized.csv
@@ -167,6 +171,44 @@ Normalize a geofeed. `--output FILE` always writes canonical CSV regardless of `
 | `--no-aggregate`    | off     | Do not collapse compatible prefixes into larger prefixes.                |
 | `--no-dedupe`       | off     | Do not remove exact duplicate rows when aggregation is disabled.         |
 | `--no-host-bit-fix` | off     | Do not coerce prefixes with host bits set to their containing network.   |
+
+### `filter`
+
+```bash
+geofeed-tools filter SOURCE [--format ...]
+                            [--prefix CIDR] [--country CC] [--region SUB]
+                            [--city NAME] [--postal-code PC]
+                            [--family ipv4|ipv6]
+                            [--prefix-length N]
+                            [--longer]
+                            [-v]
+```
+
+Return records matching every supplied predicate (AND).
+
+| Option            | Default | Meaning                                                                                       |
+| ----------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `--prefix`        | —       | CIDR prefix. Exact match unless `--longer` is set.                                            |
+| `--country`       | —       | ISO 3166-1 alpha-2 code (case-insensitive).                                                   |
+| `--region`        | —       | ISO 3166-2 subdivision code (case-insensitive).                                               |
+| `--city`          | —       | City name (case-insensitive).                                                                 |
+| `--postal-code`   | —       | Postal code (case-insensitive).                                                               |
+| `--family`        | both    | Restrict to `ipv4` or `ipv6`.                                                                 |
+| `--prefix-length` | —       | Filter by CIDR length. Exact match unless `--longer` is set.                                  |
+| `--longer`        | off     | For `--prefix`, also match subnets contained by it. For `--prefix-length`, match length >= N. |
+
+Filters combine. Examples:
+
+```bash
+# All Canadian IPv4 records covering /24-or-longer
+geofeed-tools filter geofeeds.csv --country CA --family ipv4 --prefix-length 24 --longer
+
+# Records inside 192.0.2.0/24 in Ontario, Canada
+geofeed-tools filter geofeeds.csv --country CA --region CA-ON --prefix 192.0.2.0/24 --longer
+
+# All IPv6 records for a specific city, as raw CSV
+geofeed-tools filter geofeeds.csv --family ipv6 --city Toronto --format grep
+```
 
 ### `query`
 
@@ -256,6 +298,11 @@ canonical_csv = geofeed.normalize(output="csv")        # str
 match = geofeed.query("192.0.2.1")                     # QueryResult
 deep = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True)
 
+# Filter records by any combination of fields (all kwargs optional, AND'd)
+canada = geofeed.filter(country="CA")
+narrow = geofeed.filter(country="CA", region="CA-ON", prefix="192.0.2.0/24")
+small_v4 = geofeed.filter(family="ipv4", prefix_length=24, include_longer=True)
+
 # RDAP discovery is a static helper — no instance required
 diagnosis = GeoFeed.doctor("31.133.128.1")             # DoctorResult
 matches = GeoFeed.lookup("31.133.128.1")               # QueryResult
@@ -310,6 +357,7 @@ Methods (every method also accepts `output="objects"` (default), `"json"`, and, 
 | `validate(*, check_sort, check_content_type, check_aggregation)` | `ValidationReport \| str` | Structured validation report.                                                               |
 | `normalize(*, uppercase, sort, aggregate, dedupe, fix_host_bits)` | `list[GeofeedRecord] \| str` | Canonical normalized records.                                                               |
 | `query(query, *, return_all, include_longer)` | `QueryResult \| str`                  | Longest-prefix match (default) or all matches.                                              |
+| `filter(*, prefix=None, country=None, region=None, city=None, postal_code=None, family=None, prefix_length=None, include_longer=False)` | `list[GeofeedRecord] \| str` | Records matching every supplied predicate (AND). See [`filter` CLI section](#filter) for semantics. |
 | `info(*, top_n=20)`                          | `GeoFeedInfo \| str`                  | Detailed breakdowns: counts, geography, per-country prefixes/slash counts, length histogram, top regions/cities, and a normalize preview. |
 
 Behavior notes:

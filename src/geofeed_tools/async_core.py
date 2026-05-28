@@ -132,6 +132,34 @@ class AsyncGeoFeed(_GeoFeedBase):
             self._do_query, query, return_all=return_all, include_longer=include_longer, output=output
         )
 
+    async def filter(
+        self,
+        *,
+        prefix: str | None = None,
+        country: str | None = None,
+        region: str | None = None,
+        city: str | None = None,
+        postal_code: str | None = None,
+        family: str | int | None = None,
+        prefix_length: int | None = None,
+        include_longer: bool = False,
+        output: str = "objects",
+    ) -> list[GeofeedRecord] | str:
+        """Filter records by one or more field/property predicates asynchronously."""
+        await self._ensure_loaded()
+        return await asyncio.to_thread(
+            self._do_filter,
+            prefix=prefix,
+            country=country,
+            region=region,
+            city=city,
+            postal_code=postal_code,
+            family=family,
+            prefix_length=prefix_length,
+            include_longer=include_longer,
+            output=output,
+        )
+
     @staticmethod
     async def doctor(
         query: str,

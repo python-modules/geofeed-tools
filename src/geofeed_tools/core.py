@@ -8,6 +8,7 @@ from typing import TypeVar
 from ._query_cache import QueryIndex, QueryIndexCache
 from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .doctor import doctor_query, render_doctor_text
+from .filtering import filter_records
 from .info import DEFAULT_TOP_N, build_info
 from .io_utils import (
     doctor_to_json,
@@ -176,6 +177,40 @@ def _validate_loaded(
             f"Validation completed: source={source} records={report.records}"
             f" errors={report.errors} warnings={report.warnings}"
         ),
+    )
+
+
+def _filter_loaded(
+    source: str,
+    text: str,
+    *,
+    prefix: str | None = None,
+    country: str | None = None,
+    region: str | None = None,
+    city: str | None = None,
+    postal_code: str | None = None,
+    family: str | int | None = None,
+    prefix_length: int | None = None,
+    include_longer: bool = False,
+    output: str = "objects",
+) -> list[GeofeedRecord] | str:
+    logger.info("Filtering geofeed source: %s", source)
+    records = filter_records(
+        text,
+        prefix=prefix,
+        country=country,
+        region=region,
+        city=city,
+        postal_code=postal_code,
+        family=family,
+        prefix_length=prefix_length,
+        include_longer=include_longer,
+    )
+    return _emit(
+        records,
+        output=output,
+        serializers=_records_serializers(include_validation=False),
+        summary=f"Filter completed: source={source} records={len(records)}",
     )
 
 
@@ -362,6 +397,34 @@ class _GeoFeedBase:
             output=output,
         )
 
+    def _do_filter(
+        self,
+        *,
+        prefix: str | None = None,
+        country: str | None = None,
+        region: str | None = None,
+        city: str | None = None,
+        postal_code: str | None = None,
+        family: str | int | None = None,
+        prefix_length: int | None = None,
+        include_longer: bool = False,
+        output: str = "objects",
+    ) -> list[GeofeedRecord] | str:
+        assert self.text is not None
+        return _filter_loaded(
+            self.source,
+            self.text,
+            prefix=prefix,
+            country=country,
+            region=region,
+            city=city,
+            postal_code=postal_code,
+            family=family,
+            prefix_length=prefix_length,
+            include_longer=include_longer,
+            output=output,
+        )
+
     def _do_normalize(
         self,
         *,
@@ -528,6 +591,38 @@ class GeoFeed(_GeoFeedBase):
         """Query the source for an IP or prefix and return matching records."""
         self._ensure_loaded()
         return self._do_query(query, return_all=return_all, include_longer=include_longer, output=output)
+
+    def filter(
+        self,
+        *,
+        prefix: str | None = None,
+        country: str | None = None,
+        region: str | None = None,
+        city: str | None = None,
+        postal_code: str | None = None,
+        family: str | int | None = None,
+        prefix_length: int | None = None,
+        include_longer: bool = False,
+        output: str = "objects",
+    ) -> list[GeofeedRecord] | str:
+        """Filter records by one or more field/property predicates (AND).
+
+        ``include_longer=True`` switches the ``prefix`` filter from exact match
+        to "this prefix or any more-specific prefix", and the ``prefix_length``
+        filter from "exactly this length" to "this length or longer".
+        """
+        self._ensure_loaded()
+        return self._do_filter(
+            prefix=prefix,
+            country=country,
+            region=region,
+            city=city,
+            postal_code=postal_code,
+            family=family,
+            prefix_length=prefix_length,
+            include_longer=include_longer,
+            output=output,
+        )
 
     @staticmethod
     def doctor(
