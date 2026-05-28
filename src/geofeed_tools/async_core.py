@@ -12,6 +12,7 @@ from .core import (
     _serialize_query_result,
 )
 from .doctor import doctor_query_async
+from .info import DEFAULT_TOP_N
 from .loader import FetchError, load_input_async, source_kind
 from .logging import logger
 from .models import (
@@ -171,10 +172,15 @@ class AsyncGeoFeed(_GeoFeedBase):
         query_result = _build_lookup_result(result)
         return _serialize_query_result(query_result, output=output)
 
-    async def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
-        """Compute aggregate geofeed statistics asynchronously."""
+    async def info(
+        self,
+        *,
+        top_n: int = DEFAULT_TOP_N,
+        output: str = "objects",
+    ) -> GeoFeedInfo | str:
+        """Compute detailed geofeed info asynchronously."""
         await self._ensure_loaded()
-        return await asyncio.to_thread(self._do_info, output=output)
+        return await asyncio.to_thread(self._do_info, top_n=top_n, output=output)
 
 
 __all__ = ["AsyncGeoFeed", "FetchError", "GeoFeedDiscoveryError"]

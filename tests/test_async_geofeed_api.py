@@ -54,7 +54,7 @@ def test_async_parse_and_info() -> None:
         info = await geofeed.info(output="objects")
         assert isinstance(records, list)
         assert not isinstance(info, str)
-        return len(records), info.ipv4_records, info.ipv6_records
+        return len(records), info.prefixes_v4, info.prefixes_v6
 
     record_count, ipv4_count, ipv6_count = asyncio.run(scenario())
     assert record_count == 3

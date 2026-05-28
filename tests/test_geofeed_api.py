@@ -25,8 +25,8 @@ def test_parse_and_info() -> None:
     info = geofeed.info(output="objects")
     assert not isinstance(info, str)
     assert info.total_records == 3
-    assert info.ipv4_records == 2
-    assert info.ipv6_records == 1
+    assert info.prefixes_v4 == 2
+    assert info.prefixes_v6 == 1
 
 
 def test_validate_invalid_file() -> None:

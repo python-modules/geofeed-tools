@@ -7,6 +7,7 @@ Every renderer accepts a ``format`` string (one of ``rich``, ``plain``, ``grep``
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from geofeed_tools.doctor import render_doctor_text
@@ -277,80 +278,179 @@ def _records_plain(records: list[GeofeedRecord], *, title: str, include_validati
 
 
 def _info_grep(info: GeoFeedInfo) -> None:
-    pairs = [
-        ("source", info.source),
-        ("total_records", info.total_records),
-        ("unique_prefixes", info.unique_prefixes),
-        ("ipv4_records", info.ipv4_records),
-        ("ipv6_records", info.ipv6_records),
-        ("unique_countries", info.unique_countries),
-        ("unique_regions", info.unique_regions),
-        ("unique_cities", info.unique_cities),
-        ("unique_postal_codes", info.unique_postal_codes),
-        ("duplicates", info.duplicates),
-        ("errors", info.errors),
-        ("warnings", info.warnings),
-    ]
-    for key, value in pairs:
-        print(f"{key}={value}")
+    print(f"source={info.source}")
+    print(f"prefixes_total={info.prefixes_total}")
+    print(f"prefixes_v4={info.prefixes_v4}")
+    print(f"prefixes_v6={info.prefixes_v6}")
+    print(f"unique_prefixes={info.unique_prefixes}")
+    print(f"duplicates={info.duplicates}")
+    print(f"slash_24s={info.slash_24s}")
+    print(f"slash_48s={info.slash_48s}")
+    print(f"unique_countries={info.unique_countries}")
+    print(f"unique_regions={info.unique_regions}")
+    print(f"unique_cities={info.unique_cities}")
+    print(f"unique_postal_codes={info.unique_postal_codes}")
+    print(f"errors={info.errors}")
+    print(f"warnings={info.warnings}")
+    if info.normalized is not None:
+        n = info.normalized
+        print(f"normalized.prefixes_total={n.prefixes_total}")
+        print(f"normalized.prefixes_v4={n.prefixes_v4}")
+        print(f"normalized.prefixes_v6={n.prefixes_v6}")
+        print(f"normalized.slash_24s={n.slash_24s}")
+        print(f"normalized.slash_48s={n.slash_48s}")
+        print(f"normalized.invalid_removed={n.invalid_removed}")
+        print(f"normalized.aggregated={n.aggregated}")
+    for entry in info.by_country:
+        print(f"country.{entry.country}.prefixes_v4={entry.prefixes_v4}")
+        print(f"country.{entry.country}.prefixes_v6={entry.prefixes_v6}")
+        print(f"country.{entry.country}.slash_24s={entry.slash_24s}")
+        print(f"country.{entry.country}.slash_48s={entry.slash_48s}")
+    for prefixlen, count in info.prefix_length_v4:
+        print(f"prefixlen.v4.{prefixlen}={count}")
+    for prefixlen, count in info.prefix_length_v6:
+        print(f"prefixlen.v6.{prefixlen}={count}")
+    for rank, (region, count) in enumerate(info.top_regions, start=1):
+        print(f"top_region.{rank}.name={region}")
+        print(f"top_region.{rank}.count={count}")
+    for rank, (city, count) in enumerate(info.top_cities, start=1):
+        print(f'top_city.{rank}.name="{city}"')
+        print(f"top_city.{rank}.count={count}")
 
 
 def _info_plain(info: GeoFeedInfo) -> None:
     print(f"Geofeed info — {info.source}")
     print()
-    sections: list[tuple[str, list[tuple[str, int]]]] = [
-        (
-            "Records",
+    print("Overview:")
+    _print_kv_rows(
+        [
+            ("Total prefixes", _format_count(info.prefixes_total)),
+            ("  IPv4", _format_count(info.prefixes_v4)),
+            ("  IPv6", _format_count(info.prefixes_v6)),
+            ("Unique prefixes", _format_count(info.unique_prefixes)),
+            ("Duplicates", _format_count(info.duplicates)),
+            ("/24 equivalents (IPv4)", _format_count(info.slash_24s)),
+            ("/48 equivalents (IPv6)", _format_count(info.slash_48s)),
+            ("Errors", _format_count(info.errors)),
+            ("Warnings", _format_count(info.warnings)),
+        ],
+        indent="  ",
+    )
+
+    print()
+    print("Geography:")
+    _print_kv_rows(
+        [
+            ("Countries", _format_count(info.unique_countries)),
+            ("Regions", _format_count(info.unique_regions)),
+            ("Cities", _format_count(info.unique_cities)),
+            ("Postal codes", _format_count(info.unique_postal_codes)),
+        ],
+        indent="  ",
+    )
+
+    if info.normalized is not None:
+        n = info.normalized
+        print()
+        print("If normalized:")
+        _print_kv_rows(
             [
-                ("Total records", info.total_records),
-                ("Unique prefixes", info.unique_prefixes),
-                ("IPv4 records", info.ipv4_records),
-                ("IPv6 records", info.ipv6_records),
-                ("Duplicates", info.duplicates),
+                ("Prefixes", f"{_format_count(n.prefixes_total)} ({_signed_delta(n.prefixes_total - info.prefixes_total)})"),
+                ("  IPv4", _format_count(n.prefixes_v4)),
+                ("  IPv6", _format_count(n.prefixes_v6)),
+                ("/24 equivalents (IPv4)", _format_count(n.slash_24s)),
+                ("/48 equivalents (IPv6)", _format_count(n.slash_48s)),
+                ("Invalid removed", _format_count(n.invalid_removed)),
+                ("Aggregated / deduped", _format_count(n.aggregated)),
             ],
-        ),
-        (
-            "Geography",
-            [
-                ("Countries", info.unique_countries),
-                ("Regions", info.unique_regions),
-                ("Cities", info.unique_cities),
-                ("Postal codes", info.unique_postal_codes),
-            ],
-        ),
-        (
-            "Validation",
-            [
-                ("Errors", info.errors),
-                ("Warnings", info.warnings),
-            ],
-        ),
-    ]
-    for index, (heading, rows) in enumerate(sections):
-        if index:
-            print()
-        print(f"{heading}:")
-        key_width = max(len(key) for key, _ in rows)
-        for key, value in rows:
-            print(f"  {key.ljust(key_width)}  {_format_count(value)}")
+            indent="  ",
+        )
+
+    if info.by_country:
+        print()
+        print(f"By country ({len(info.by_country)}):")
+        header = ("Country", "v4 prefixes", "v6 prefixes", "v4 /24s", "v6 /48s")
+        rows = [
+            (
+                c.country,
+                _format_count(c.prefixes_v4),
+                _format_count(c.prefixes_v6),
+                _format_count(c.slash_24s),
+                _format_count(c.slash_48s),
+            )
+            for c in info.by_country
+        ]
+        _print_aligned(header, rows, indent="  ")
+
+    if info.prefix_length_v4 or info.prefix_length_v6:
+        print()
+        print("Prefix length distribution:")
+        if info.prefix_length_v4:
+            print("  IPv4:")
+            _print_kv_rows(
+                [(f"/{pl}", _format_count(count)) for pl, count in info.prefix_length_v4],
+                indent="    ",
+            )
+        if info.prefix_length_v6:
+            print("  IPv6:")
+            _print_kv_rows(
+                [(f"/{pl}", _format_count(count)) for pl, count in info.prefix_length_v6],
+                indent="    ",
+            )
+
+    if info.top_regions:
+        print()
+        print(f"Top regions ({len(info.top_regions)}):")
+        _print_kv_rows(
+            [(region, _format_count(count)) for region, count in info.top_regions],
+            indent="  ",
+        )
+
+    if info.top_cities:
+        print()
+        print(f"Top cities ({len(info.top_cities)}):")
+        _print_kv_rows(
+            [(city, _format_count(count)) for city, count in info.top_cities],
+            indent="  ",
+        )
 
 
 def _info_rich(info: GeoFeedInfo) -> None:
     from rich.box import ROUNDED
     from rich.console import Console, Group
     from rich.panel import Panel
+    from rich.table import Table
     from rich.text import Text
 
     console = Console()
-    records_grid = _kv_grid(
+    error_color = "red" if info.errors else "green"
+    warning_color = "yellow" if info.warnings else "green"
+    overview = _kv_grid(
         [
-            ("Total records", _format_count(info.total_records)),
+            (
+                "Total prefixes",
+                f"{_format_count(info.prefixes_total)}  "
+                f"([cyan]IPv4 {_format_count(info.prefixes_v4)}[/cyan]  "
+                f"[magenta]IPv6 {_format_count(info.prefixes_v6)}[/magenta])",
+            ),
             ("Unique prefixes", _format_count(info.unique_prefixes)),
-            ("IPv4 records", _format_count(info.ipv4_records)),
-            ("IPv6 records", _format_count(info.ipv6_records)),
             ("Duplicates", _format_count(info.duplicates)),
+            ("IPv4 /24-equivalents", f"[cyan]{_format_count(info.slash_24s)}[/cyan]"),
+            ("IPv6 /48-equivalents", f"[magenta]{_format_count(info.slash_48s)}[/magenta]"),
+            ("Errors", f"[{error_color}]{_format_count(info.errors)}[/{error_color}]"),
+            ("Warnings", f"[{warning_color}]{_format_count(info.warnings)}[/{warning_color}]"),
         ]
     )
+    console.print(
+        Panel(
+            overview,
+            title=f"[bold]Geofeed info —[/bold] [magenta]{info.source}[/magenta]",
+            border_style="cyan",
+            box=ROUNDED,
+            padding=(1, 2),
+        )
+    )
+
     geo_grid = _kv_grid(
         [
             ("Countries", _format_count(info.unique_countries)),
@@ -360,35 +460,154 @@ def _info_rich(info: GeoFeedInfo) -> None:
         ],
         key_style="bold magenta",
     )
-    error_color = "red" if info.errors else "green"
-    warning_color = "yellow" if info.warnings else "green"
-    validation_grid = _kv_grid(
-        [
-            ("Errors", f"[{error_color}]{_format_count(info.errors)}[/{error_color}]"),
-            ("Warnings", f"[{warning_color}]{_format_count(info.warnings)}[/{warning_color}]"),
-        ],
-        key_style="bold yellow",
-    )
-
-    body = Group(
-        Text("Records", style="bold underline"),
-        records_grid,
-        Text(),
-        Text("Geography", style="bold underline"),
-        geo_grid,
-        Text(),
-        Text("Validation", style="bold underline"),
-        validation_grid,
-    )
+    console.print()
     console.print(
         Panel(
-            body,
-            title=f"[bold]Geofeed info —[/bold] [magenta]{info.source}[/magenta]",
-            border_style="cyan",
+            geo_grid,
+            title="Geography",
+            border_style="magenta",
             box=ROUNDED,
             padding=(1, 2),
         )
     )
+
+    if info.normalized is not None:
+        n = info.normalized
+        delta_total = _signed_delta(n.prefixes_total - info.prefixes_total)
+        delta_color = "yellow" if n.prefixes_total != info.prefixes_total else "green"
+        norm_grid = _kv_grid(
+            [
+                (
+                    "Prefixes",
+                    f"{_format_count(n.prefixes_total)}  "
+                    f"[{delta_color}]({delta_total})[/{delta_color}]  "
+                    f"([cyan]IPv4 {_format_count(n.prefixes_v4)}[/cyan]  "
+                    f"[magenta]IPv6 {_format_count(n.prefixes_v6)}[/magenta])",
+                ),
+                ("IPv4 /24-equivalents", f"[cyan]{_format_count(n.slash_24s)}[/cyan]"),
+                ("IPv6 /48-equivalents", f"[magenta]{_format_count(n.slash_48s)}[/magenta]"),
+                ("Invalid removed", f"[red]{_format_count(n.invalid_removed)}[/red]"),
+                ("Aggregated / deduped", f"[yellow]{_format_count(n.aggregated)}[/yellow]"),
+            ]
+        )
+        console.print()
+        console.print(
+            Panel(
+                norm_grid,
+                title="If normalized",
+                border_style="yellow",
+                box=ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+    if info.by_country:
+        country_table = Table(box=ROUNDED, border_style="blue", header_style="bold blue", expand=False)
+        country_table.add_column("Country", no_wrap=True)
+        country_table.add_column("v4 prefixes", justify="right")
+        country_table.add_column("v6 prefixes", justify="right")
+        country_table.add_column("v4 /24s", justify="right")
+        country_table.add_column("v6 /48s", justify="right")
+        for entry in info.by_country:
+            country_table.add_row(
+                entry.country,
+                _format_count(entry.prefixes_v4),
+                _format_count(entry.prefixes_v6),
+                _format_count(entry.slash_24s),
+                _format_count(entry.slash_48s),
+            )
+        console.print()
+        console.print(
+            Panel(
+                country_table,
+                title=f"By country ({len(info.by_country)})",
+                border_style="blue",
+                box=ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+    if info.prefix_length_v4 or info.prefix_length_v6:
+        v4 = _length_table_rich(info.prefix_length_v4, "IPv4", "cyan")
+        v6 = _length_table_rich(info.prefix_length_v6, "IPv6", "magenta")
+        items: list = []
+        if v4 is not None:
+            items.append(v4)
+        if v6 is not None:
+            if items:
+                items.append(Text())
+            items.append(v6)
+        console.print()
+        console.print(
+            Panel(
+                Group(*items),
+                title="Prefix length distribution",
+                border_style="cyan",
+                box=ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+    if info.top_regions:
+        region_table = Table(box=ROUNDED, border_style="magenta", header_style="bold magenta", expand=False)
+        region_table.add_column("Region", no_wrap=True)
+        region_table.add_column("Prefixes", justify="right")
+        for region, count in info.top_regions:
+            region_table.add_row(region, _format_count(count))
+        console.print()
+        console.print(
+            Panel(
+                region_table,
+                title=f"Top regions ({len(info.top_regions)})",
+                border_style="magenta",
+                box=ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+    if info.top_cities:
+        city_table = Table(box=ROUNDED, border_style="yellow", header_style="bold yellow", expand=False)
+        city_table.add_column("City", no_wrap=False)
+        city_table.add_column("Prefixes", justify="right")
+        for city, count in info.top_cities:
+            city_table.add_row(city, _format_count(count))
+        console.print()
+        console.print(
+            Panel(
+                city_table,
+                title=f"Top cities ({len(info.top_cities)})",
+                border_style="yellow",
+                box=ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+
+def _signed_delta(value: int) -> str:
+    """Render an int with a leading ``+`` for non-negative values."""
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{value:,}"
+
+
+def _length_table_rich(rows: tuple[tuple[int, int], ...], label: str, color: str):
+    if not rows:
+        return None
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    table = Table(
+        title=label,
+        title_style=f"bold {color}",
+        box=SIMPLE,
+        border_style=color,
+        header_style=f"bold {color}",
+        expand=False,
+    )
+    table.add_column("Prefix length", justify="right", no_wrap=True)
+    table.add_column("Count", justify="right")
+    for prefixlen, count in rows:
+        table.add_row(f"/{prefixlen}", _format_count(count))
+    return table
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -522,6 +741,31 @@ def _hook_plain(report: ValidationReport, source: str, *, show_issues: bool, fai
             f"hook: OK — {report.records} record(s), {report.warnings} warning(s) in {source}",
             file=sys.stderr,
         )
+
+
+def _print_kv_rows(rows: list[tuple[str, str]], *, indent: str = "  ") -> None:
+    if not rows:
+        return
+    key_width = max(len(key) for key, _ in rows)
+    for key, value in rows:
+        print(f"{indent}{key.ljust(key_width)}  {value}")
+
+
+def _print_aligned(
+    headers: tuple[str, ...],
+    rows: Sequence[tuple[str, ...]],
+    *,
+    indent: str = "  ",
+) -> None:
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+    formatted_headers = "  ".join(headers[i].ljust(widths[i]) for i in range(len(headers)))
+    print(f"{indent}{formatted_headers}")
+    for row in rows:
+        formatted_row = "  ".join(row[i].ljust(widths[i]) for i in range(len(headers)))
+        print(f"{indent}{formatted_row}")
 
 
 # ──────────────────────────────────────────────────────────────────────────

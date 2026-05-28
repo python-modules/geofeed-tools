@@ -20,9 +20,10 @@ from geofeed_tools.cli.render import (
     render_records,
     render_validation,
 )
+from geofeed_tools.info import DEFAULT_TOP_N
 from geofeed_tools.io_utils import doctor_to_json
 from geofeed_tools.logging import configure_cli_structlog
-from geofeed_tools.models import DoctorResult, QueryResult, ValidationReport
+from geofeed_tools.models import DoctorResult, GeoFeedInfo, QueryResult, ValidationReport
 from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
 
 _CLI_EXTRAS = ("typer", "structlog", "rich")
@@ -67,6 +68,20 @@ class RdapMethod(StrEnum):
 
     RDAP_ORG = RDAP_ORG_METHOD
     IANA_BOOTSTRAP = IANA_BOOTSTRAP_METHOD
+
+
+SOURCE_HELP = "Local file path or HTTP(S) URL of the geofeed source"
+QUERY_HELP = "IP address or CIDR prefix to look up"
+
+
+def _source_argument(typer):
+    """Shared SOURCE positional argument for commands that load a geofeed."""
+    return typer.Argument(..., help=SOURCE_HELP)
+
+
+def _query_argument(typer):
+    """Shared QUERY positional argument for IP/CIDR lookups."""
+    return typer.Argument(..., help=QUERY_HELP)
 
 
 def _verbose_option(typer):
@@ -123,7 +138,7 @@ def _register_dump_command(app, typer) -> None:
 
     @app.command("dump")
     def dump_command(
-        source: str,
+        source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         normalize_first: bool = typer.Option(
             False,
@@ -161,7 +176,7 @@ def _register_validate_command(app, typer) -> None:
 
     @app.command("validate")
     def validate_command(
-        source: str,
+        source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         strict: bool = typer.Option(
             False,
@@ -207,7 +222,7 @@ def _register_normalize_command(app, typer) -> None:
 
     @app.command("normalize")
     def normalize_command(
-        source: str,
+        source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         output_file: str | None = typer.Option(
             None,
@@ -261,8 +276,8 @@ def _register_query_command(app, typer) -> None:
 
     @app.command("query")
     def query_command(
-        source: str,
-        query: str,
+        source: str = _source_argument(typer),
+        query: str = _query_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
@@ -292,7 +307,7 @@ def _register_doctor_command(app, typer) -> None:
 
     @app.command("doctor")
     def doctor_command(
-        query: str,
+        query: str = _query_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
@@ -320,7 +335,7 @@ def _register_lookup_command(app, typer) -> None:
 
     @app.command("lookup")
     def lookup_command(
-        query: str,
+        query: str = _query_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
@@ -376,15 +391,21 @@ def _register_info_command(app, typer) -> None:
 
     @app.command("info")
     def info_command(
-        source: str,
+        source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
+        top_n: int = typer.Option(
+            DEFAULT_TOP_N,
+            "--top-n",
+            "-n",
+            help="Limit the size of top-region / top-city breakdowns",
+        ),
         verbose: int = _verbose_option(typer),
     ) -> None:
-        """Show geofeed statistics."""
+        """Show detailed geofeed info: counts, geography, per-country breakdown, normalize preview."""
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
-        info = geofeed.info(output="objects")
-        assert not isinstance(info, str)
+        info = geofeed.info(top_n=top_n, output="objects")
+        assert isinstance(info, GeoFeedInfo)
         render_info(info, format=output_format.value)
 
 
@@ -393,7 +414,7 @@ def _register_hook_command(app, typer) -> None:
 
     @app.command("hook")
     def hook_command(
-        source: str,
+        source: str = _source_argument(typer),
         output_format: OutputFormat = _format_option(typer),
         strict: bool = typer.Option(
             False,

@@ -27,7 +27,7 @@
       - [`QueryResult`](#queryresult)
       - [`DoctorLookup`](#doctorlookup)
       - [`DoctorResult`](#doctorresult)
-      - [`GeoFeedInfo`](#geofeedinfo)
+      - [`GeoFeedInfo` / `CountryStatistics` / `NormalizationPreview`](#geofeedinfo--countrystatistics--normalizationpreview)
     - [Error handling](#error-handling)
   - [GitHub Actions integration](#github-actions-integration)
   - [Testing](#testing)
@@ -76,7 +76,7 @@ geofeed-tools doctor 31.133.128.1
 # Validate a geofeed source
 geofeed-tools validate geofeeds.csv
 
-# Show summary statistics
+# Show detailed info (counts, geography, per-country breakdown, normalize preview)
 geofeed-tools info geofeeds.csv
 
 # Query a geofeed for an IP or prefix
@@ -197,10 +197,34 @@ Same RDAP discovery flow as `doctor`, but the output contains only the matching 
 ### `info`
 
 ```bash
-geofeed-tools info SOURCE [--format ...] [-v]
+geofeed-tools info SOURCE [--format ...] [--top-n N] [-v]
 ```
 
-Show record, geography, and validation counts. The grep format emits one `key=value` line per metric for easy piping into `grep`/`awk`.
+Comprehensive geofeed analysis. The command runs the feed through parsing, validation, and a virtual normalize pass and reports:
+
+- **Overview** — total prefixes, unique prefixes, duplicates, errors and warnings.
+- **/24- and /48-equivalents** — total address coverage measured as `sum_addresses // 256` for IPv4 and `sum_addresses // 2^80` for IPv6. Prefixes shorter than the divisor contribute whole multiples (a /23 = 2 /24s); fragments smaller than the divisor (a lone /25) round down to zero.
+- **Geography summary** — distinct counts of countries, regions, cities, and postal codes.
+- **Per-country breakdown** — prefix and slash counts split by IP version, sorted by total prefix count.
+- **Prefix-length histograms** — sorted ascending for IPv4 and IPv6.
+- **Top regions and top cities** — sized by `--top-n` (default 20).
+- **If normalized** — projected prefix counts, /24- and /48-equivalents, the number of invalid rows that would be dropped, and the number of rows merged by aggregation/dedupe.
+
+The `grep` format emits one `key=value` line per metric, including the normalize preview and ranked keys for top regions/cities:
+
+```
+prefixes_total=3
+unique_prefixes=3
+slash_24s=1
+slash_48s=65536
+unique_countries=1
+country.US.prefixes_v4=2
+normalized.prefixes_total=2
+normalized.invalid_removed=0
+normalized.aggregated=1
+top_city.1.name="San Francisco"
+top_city.1.count=2
+```
 
 ### `hook`
 
@@ -236,7 +260,7 @@ deep = geofeed.query("192.0.2.0/24", return_all=True, include_longer=True)
 diagnosis = GeoFeed.doctor("31.133.128.1")             # DoctorResult
 matches = GeoFeed.lookup("31.133.128.1")               # QueryResult
 
-summary = geofeed.info()                               # GeoFeedInfo
+summary = geofeed.info()                               # GeoFeedInfo (incl. normalize preview)
 
 # Eager constructor alternative (symmetric with AsyncGeoFeed.from_source)
 loaded = GeoFeed.from_source("geofeeds.csv")
@@ -286,7 +310,7 @@ Methods (every method also accepts `output="objects"` (default), `"json"`, and, 
 | `validate(*, check_sort, check_content_type, check_aggregation)` | `ValidationReport \| str` | Structured validation report.                                                               |
 | `normalize(*, uppercase, sort, aggregate, dedupe, fix_host_bits)` | `list[GeofeedRecord] \| str` | Canonical normalized records.                                                               |
 | `query(query, *, return_all, include_longer)` | `QueryResult \| str`                  | Longest-prefix match (default) or all matches.                                              |
-| `info()`                                     | `GeoFeedInfo \| str`                  | Aggregate statistics.                                                                       |
+| `info(*, top_n=20)`                          | `GeoFeedInfo \| str`                  | Detailed breakdowns: counts, geography, per-country prefixes/slash counts, length histogram, top regions/cities, and a normalize preview. |
 
 Behavior notes:
 
@@ -394,23 +418,60 @@ RDAP discovery metadata returned inside `DoctorResult.lookup`.
 | `lookup`  | `DoctorLookup`                | RDAP discovery metadata.                 |
 | `matches` | `tuple[GeofeedRecord, ...]`   | Matching geofeed rows.                   |
 
-#### `GeoFeedInfo`
+#### `GeoFeedInfo` / `CountryStatistics` / `NormalizationPreview`
 
-| Field                  | Type                  | Meaning                                  |
-| ---------------------- | --------------------- | ---------------------------------------- |
-| `source`               | `str`                 | Original path or URL.                    |
-| `total_records`        | `int`                 | Number of parsed records.                |
-| `unique_prefixes`      | `int`                 | Distinct prefix count.                   |
-| `ipv4_records`         | `int`                 | IPv4 record count.                       |
-| `ipv6_records`         | `int`                 | IPv6 record count.                       |
-| `unique_countries`     | `int`                 | Distinct country count.                  |
-| `unique_regions`       | `int`                 | Distinct region count.                   |
-| `unique_cities`        | `int`                 | Distinct city count.                     |
-| `unique_postal_codes`  | `int`                 | Distinct postal-code count.              |
-| `duplicates`           | `int`                 | `total_records - unique_prefixes`.       |
-| `errors`               | `int`                 | Validation error count.                  |
-| `warnings`             | `int`                 | Validation warning count.                |
-| `metadata`             | `dict[str, object]`   | Reserved for extensible metadata.        |
+Returned by `GeoFeed.info()` and `AsyncGeoFeed.info()`.
+
+`GeoFeedInfo`:
+
+| Field                  | Type                                  | Meaning                                                                                              |
+| ---------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `source`               | `str`                                 | Original path or URL.                                                                                |
+| `prefixes_v4`          | `int`                                 | IPv4 prefix count.                                                                                   |
+| `prefixes_v6`          | `int`                                 | IPv6 prefix count.                                                                                   |
+| `unique_prefixes`      | `int`                                 | Distinct prefix string count.                                                                        |
+| `duplicates`           | `int`                                 | `prefixes_total - unique_prefixes`.                                                                  |
+| `slash_24s`            | `int`                                 | IPv4 address space in /24-equivalents (`sum_addresses // 256`).                                       |
+| `slash_48s`            | `int`                                 | IPv6 address space in /48-equivalents (`sum_addresses // 2**80`).                                     |
+| `unique_countries`     | `int`                                 | Distinct country count.                                                                              |
+| `unique_regions`       | `int`                                 | Distinct region count.                                                                               |
+| `unique_cities`        | `int`                                 | Distinct city count.                                                                                 |
+| `unique_postal_codes`  | `int`                                 | Distinct postal-code count.                                                                          |
+| `errors`               | `int`                                 | Validation error count.                                                                              |
+| `warnings`             | `int`                                 | Validation warning count.                                                                            |
+| `by_country`           | `tuple[CountryStatistics, ...]`       | Per-country breakdown, sorted by descending total prefix count.                                      |
+| `prefix_length_v4`     | `tuple[tuple[int, int], ...]`         | Sorted `(prefixlen, count)` histogram for IPv4.                                                      |
+| `prefix_length_v6`     | `tuple[tuple[int, int], ...]`         | Sorted `(prefixlen, count)` histogram for IPv6.                                                      |
+| `top_regions`          | `tuple[tuple[str, int], ...]`         | Top-`top_n` `(region, count)` pairs by prefix count.                                                 |
+| `top_cities`           | `tuple[tuple[str, int], ...]`         | Top-`top_n` `(city, count)` pairs by prefix count.                                                   |
+| `normalized`           | `NormalizationPreview \| None`        | Projected state after a default `normalize()`; `None` if the builder was called without text input.  |
+| `metadata`             | `dict[str, object]`                   | Reserved for extensible metadata.                                                                    |
+
+Properties: `prefixes_total` (= `prefixes_v4 + prefixes_v6`) and `total_records` (alias of `prefixes_total`).
+
+`CountryStatistics` (one row in `by_country`):
+
+| Field           | Type    | Meaning                                       |
+| --------------- | ------- | --------------------------------------------- |
+| `country`       | `str`   | ISO 3166-1 alpha-2 code, uppercased.          |
+| `prefixes_v4`   | `int`   | IPv4 prefix count for this country.           |
+| `prefixes_v6`   | `int`   | IPv6 prefix count for this country.           |
+| `slash_24s`     | `int`   | IPv4 coverage in /24-equivalents.             |
+| `slash_48s`     | `int`   | IPv6 coverage in /48-equivalents.             |
+
+Properties: `prefixes_total`.
+
+`NormalizationPreview` (the `normalized` field of `GeoFeedInfo`):
+
+| Field             | Type   | Meaning                                                                                  |
+| ----------------- | ------ | ---------------------------------------------------------------------------------------- |
+| `prefixes_total`  | `int`  | Projected total prefix count after `normalize()`.                                        |
+| `prefixes_v4`     | `int`  | Projected IPv4 prefix count.                                                             |
+| `prefixes_v6`     | `int`  | Projected IPv6 prefix count.                                                             |
+| `slash_24s`       | `int`  | Projected IPv4 /24-equivalents.                                                          |
+| `slash_48s`       | `int`  | Projected IPv6 /48-equivalents.                                                          |
+| `invalid_removed` | `int`  | Rows dropped because their prefix could not be parsed (even with host-bit fixing).       |
+| `aggregated`      | `int`  | Rows folded into a supernet or removed as exact duplicates during aggregation/dedupe.    |
 
 ### Error handling
 

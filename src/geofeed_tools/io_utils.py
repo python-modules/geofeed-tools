@@ -7,7 +7,13 @@ import json
 from collections.abc import Iterable
 from io import StringIO
 
-from .models import DoctorResult, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .models import (
+    DoctorResult,
+    GeoFeedInfo,
+    GeofeedRecord,
+    QueryResult,
+    ValidationReport,
+)
 
 
 def records_to_csv(

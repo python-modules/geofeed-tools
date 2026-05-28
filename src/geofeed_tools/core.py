@@ -8,7 +8,7 @@ from typing import TypeVar
 from ._query_cache import QueryIndex, QueryIndexCache
 from .config import DEFAULT_RDAP_METHOD, TRACE_LEVEL
 from .doctor import doctor_query, render_doctor_text
-from .info import build_info
+from .info import DEFAULT_TOP_N, build_info
 from .io_utils import (
     doctor_to_json,
     info_to_json,
@@ -19,7 +19,14 @@ from .io_utils import (
 )
 from .loader import FetchError, decode_text, load_input, source_kind
 from .logging import logger
-from .models import DoctorResult, GeoFeedDiscoveryError, GeoFeedInfo, GeofeedRecord, QueryResult, ValidationReport
+from .models import (
+    DoctorResult,
+    GeoFeedDiscoveryError,
+    GeoFeedInfo,
+    GeofeedRecord,
+    QueryResult,
+    ValidationReport,
+)
 from .normalize import normalize_records
 from .parse import annotate_validity, parse_text, parse_text_with_networks
 from .query import load_query_records, query_text
@@ -232,19 +239,20 @@ def _info_loaded(
     text: str,
     content_type: str | None,
     *,
+    top_n: int = DEFAULT_TOP_N,
     output: str = "objects",
 ) -> GeoFeedInfo | str:
-    logger.info("Computing geofeed summary: %s", source)
+    logger.info("Computing geofeed info: %s", source)
     records, networks = parse_text_with_networks(text)
     report = validate_bytes(raw, source, content_type)
-    info = build_info(source, records, report, networks=networks)
+    info = build_info(source, records, networks, report, text=text, top_n=top_n)
     return _emit(
         info,
         output=output,
         serializers=_INFO_SERIALIZERS,
         summary=(
-            f"Info completed: source={source} total_records={info.total_records}"
-            f" errors={info.errors} warnings={info.warnings}"
+            f"Info completed: source={source} prefixes={info.prefixes_total}"
+            f" countries={len(info.by_country)} errors={info.errors} warnings={info.warnings}"
         ),
     )
 
@@ -398,7 +406,12 @@ class _GeoFeedBase:
             indexed_records=indexed_records,
         )
 
-    def _do_info(self, *, output: str = "objects") -> GeoFeedInfo | str:
+    def _do_info(
+        self,
+        *,
+        top_n: int = DEFAULT_TOP_N,
+        output: str = "objects",
+    ) -> GeoFeedInfo | str:
         assert self.raw is not None
         assert self.text is not None
         return _info_loaded(
@@ -406,6 +419,7 @@ class _GeoFeedBase:
             self.raw,
             self.text,
             self.content_type,
+            top_n=top_n,
             output=output,
         )
 
@@ -554,10 +568,20 @@ class GeoFeed(_GeoFeedBase):
             output=output,
         )
 
-    def info(self, *, output: str = "objects") -> GeoFeedInfo | str:
-        """Compute aggregate statistics for the current geofeed source."""
+    def info(
+        self,
+        *,
+        top_n: int = DEFAULT_TOP_N,
+        output: str = "objects",
+    ) -> GeoFeedInfo | str:
+        """Compute detailed info for the current geofeed source.
+
+        The returned ``GeoFeedInfo`` includes total counts, geography uniques,
+        per-country breakdowns, prefix-length histograms, top regions/cities,
+        and a preview of what the feed would look like after normalize().
+        """
         self._ensure_loaded()
-        return self._do_info(output=output)
+        return self._do_info(top_n=top_n, output=output)
 
 
 __all__ = ["FetchError", "GeoFeed", "GeoFeedDiscoveryError"]
