@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import csv
 import ipaddress
+from typing import TypeVar, cast
 
 from .config import TRACE_LEVEL
 from .logging import logger
@@ -12,6 +13,7 @@ from .models import GeofeedRecord
 from .parsing import iter_data_lines, normalize_fields, parse_record
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+_NetworkV = TypeVar("_NetworkV", ipaddress.IPv4Network, ipaddress.IPv6Network)
 
 
 def parse_for_normalize(
@@ -197,9 +199,12 @@ def _aggregate(
     out: list[tuple[Network, str, str, str, str]] = []
     for (_version, country, region, city, postal), entries in by_key.items():
         unique = {network for network, _lineno in entries}
-        collapsed = _collapse_same_version(list(unique))
-        for network in collapsed:
-            out.append((network, country, region, city, postal))
+        if _version == 4:
+            for network in _collapse_same_version([cast(ipaddress.IPv4Network, network) for network in unique]):
+                out.append((network, country, region, city, postal))
+        else:
+            for network in _collapse_same_version([cast(ipaddress.IPv6Network, network) for network in unique]):
+                out.append((network, country, region, city, postal))
     logger.debug(
         "Aggregated geofeed normalization records: input=%d groups=%d output=%d",
         len(records),
@@ -214,7 +219,7 @@ def _network_version(network: Network) -> int:
     return 4 if isinstance(network, ipaddress.IPv4Network) else 6
 
 
-def _collapse_same_version(networks: list[Network]) -> list[Network]:
+def _collapse_same_version(networks: list[_NetworkV]) -> list[_NetworkV]:
     """Collapse networks that are known to share the same IP version."""
     if not networks:
         return []

@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable, Mapping, MutableMapping
+from typing import Any, cast
 
 from .config import LOGGER_NAME, TRACE_LEVEL
 
 logger = logging.getLogger(LOGGER_NAME)
+
+Processor = Callable[
+    [Any, str, MutableMapping[str, Any]],
+    Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
+]
 
 logging.addLevelName(TRACE_LEVEL, "TRACE")
 
@@ -53,10 +60,10 @@ def configure_cli_structlog(verbosity: int = 0) -> None:
     level = _verbosity_to_level(verbosity)
 
     timestamper = structlog.processors.TimeStamper(fmt="%H:%M:%S")
-    shared_processors = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        timestamper,
+    shared_processors: list[Processor] = [
+        cast(Processor, structlog.contextvars.merge_contextvars),
+        cast(Processor, structlog.stdlib.add_log_level),
+        cast(Processor, timestamper),
     ]
     renderer = structlog.dev.ConsoleRenderer(
         colors=True,

@@ -228,9 +228,10 @@ def _walk_query_path(
 
     for depth in range(query_network.prefixlen):
         bit = (address_value >> (max_prefixlen - depth - 1)) & 1
-        node = node.zero if bit == 0 else node.one
-        if node is None:
+        next_node = node.zero if bit == 0 else node.one
+        if next_node is None:
             return None, indices
+        node = next_node
         if node.entry_index is not None:
             indices.append(node.entry_index)
 

@@ -6,6 +6,7 @@ import collections
 import csv
 import ipaddress
 from functools import lru_cache
+from typing import TypeVar, cast
 
 import pycountry
 
@@ -22,6 +23,7 @@ from .parsing import (
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 AggregationRecord = tuple[Network, tuple[str, str, str, str], int, str]
+_NetworkV = TypeVar("_NetworkV", ipaddress.IPv4Network, ipaddress.IPv6Network)
 
 
 class _ValidationState:
@@ -109,18 +111,32 @@ def _group_aggregation_issues(
 ) -> list[ValidationIssue]:
     """Build aggregation warnings for one metadata-equivalent group."""
     unique = list(net_to_lines.keys())
-    collapsed = _collapse_same_version(unique)
+    if not unique:
+        return []
     issues: list[ValidationIssue] = []
-    for supernet in collapsed:
-        contributors = _contributors_for_supernet(
-            net_to_lines,
-            unique,
-            supernet,
-        )
-        if len({net for net, _line, _raw in contributors}) < 2:
-            continue
-        contributors.sort(key=lambda item: (item[1], item[0]))
-        issues.append(_aggregation_issue(contributors, supernet))
+
+    if isinstance(unique[0], ipaddress.IPv4Network):
+        for supernet_v4 in _collapse_same_version([cast(ipaddress.IPv4Network, network) for network in unique]):
+            contributors = _contributors_for_supernet(
+                net_to_lines,
+                unique,
+                supernet_v4,
+            )
+            if len({net for net, _line, _raw in contributors}) < 2:
+                continue
+            contributors.sort(key=lambda item: (item[1], item[0]))
+            issues.append(_aggregation_issue(contributors, supernet_v4))
+    else:
+        for supernet_v6 in _collapse_same_version([cast(ipaddress.IPv6Network, network) for network in unique]):
+            contributors = _contributors_for_supernet(
+                net_to_lines,
+                unique,
+                supernet_v6,
+            )
+            if len({net for net, _line, _raw in contributors}) < 2:
+                continue
+            contributors.sort(key=lambda item: (item[1], item[0]))
+            issues.append(_aggregation_issue(contributors, supernet_v6))
     return issues
 
 
@@ -189,7 +205,7 @@ def _network_lt(left: Network, right: Network) -> bool:
     return False
 
 
-def _collapse_same_version(unique: list[Network]) -> list[Network]:
+def _collapse_same_version(unique: list[_NetworkV]) -> list[_NetworkV]:
     """Collapse a same-version network list with stable typing."""
     if not unique:
         return []
