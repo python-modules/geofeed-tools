@@ -192,13 +192,9 @@ def _build_normalized_preview(
     aggregated_v6: list[ipaddress.IPv6Network] = []
     for (version, _country, _region, _city, _postal), unique_networks in by_key.items():
         if version == 4:
-            aggregated_v4.extend(
-                collapse_same_version([cast(ipaddress.IPv4Network, n) for n in unique_networks])
-            )
+            aggregated_v4.extend(collapse_same_version([cast(ipaddress.IPv4Network, n) for n in unique_networks]))
         else:
-            aggregated_v6.extend(
-                collapse_same_version([cast(ipaddress.IPv6Network, n) for n in unique_networks])
-            )
+            aggregated_v6.extend(collapse_same_version([cast(ipaddress.IPv6Network, n) for n in unique_networks]))
 
     addresses_v4 = sum(n.num_addresses for n in aggregated_v4)
     addresses_v6 = sum(n.num_addresses for n in aggregated_v6)

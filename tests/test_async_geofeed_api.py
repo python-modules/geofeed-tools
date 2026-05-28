@@ -172,5 +172,3 @@ def test_async_query_cache_can_be_disabled(monkeypatch) -> None:
         return call_count
 
     assert asyncio.run(scenario()) == 0
-
-

@@ -300,5 +300,3 @@ def test_geofeed_ip_source_does_not_reresolve_on_reload(monkeypatch) -> None:
     geofeed.reload()
     geofeed.reload()
     assert resolve_count == 1
-
-

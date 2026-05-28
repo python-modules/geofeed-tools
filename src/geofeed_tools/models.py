@@ -279,12 +279,8 @@ class GeoFeedInfo:
             "errors": self.errors,
             "warnings": self.warnings,
             "by_country": [c.as_dict() for c in self.by_country],
-            "prefix_length_v4": [
-                {"prefixlen": pl, "count": count} for pl, count in self.prefix_length_v4
-            ],
-            "prefix_length_v6": [
-                {"prefixlen": pl, "count": count} for pl, count in self.prefix_length_v6
-            ],
+            "prefix_length_v4": [{"prefixlen": pl, "count": count} for pl, count in self.prefix_length_v4],
+            "prefix_length_v6": [{"prefixlen": pl, "count": count} for pl, count in self.prefix_length_v6],
             "top_regions": [{"region": region, "count": count} for region, count in self.top_regions],
             "top_cities": [{"city": city, "count": count} for city, count in self.top_cities],
             "normalized": self.normalized.as_dict() if self.normalized is not None else None,

@@ -103,12 +103,8 @@ def test_filter_by_prefix_include_longer() -> None:
 
 def test_filter_combines_predicates_with_and() -> None:
     """Filters AND together: country + region + prefix narrows the result."""
-    assert _prefixes(
-        GeoFeed(FIXTURE).filter(country="CA", region="CA-ON", prefix="192.0.2.0/24")
-    ) == []
-    assert _prefixes(
-        GeoFeed(FIXTURE).filter(country="US", region="US-CA", prefix="192.0.2.0/24")
-    ) == ["192.0.2.0/24"]
+    assert _prefixes(GeoFeed(FIXTURE).filter(country="CA", region="CA-ON", prefix="192.0.2.0/24")) == []
+    assert _prefixes(GeoFeed(FIXTURE).filter(country="US", region="US-CA", prefix="192.0.2.0/24")) == ["192.0.2.0/24"]
 
 
 def test_filter_family_plus_prefix_length() -> None:

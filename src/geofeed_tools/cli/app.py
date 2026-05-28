@@ -78,10 +78,7 @@ class AddressFamily(StrEnum):
     IPV6 = "ipv6"
 
 
-SOURCE_HELP = (
-    "Geofeed source: local file path, HTTP(S) URL, or IP/prefix "
-    "(auto-discovered via RDAP)"
-)
+SOURCE_HELP = "Geofeed source: local file path, HTTP(S) URL, or IP/prefix (auto-discovered via RDAP)"
 QUERY_HELP = "IP address or CIDR prefix to look up"
 
 
@@ -249,10 +246,7 @@ def _register_validate_command(app, typer) -> None:
         hook: bool = typer.Option(
             False,
             "--hook",
-            help=(
-                "Render hook-style output for CI/CD integration "
-                "(machine-readable summary + issues on stderr)"
-            ),
+            help=("Render hook-style output for CI/CD integration (machine-readable summary + issues on stderr)"),
         ),
         show_issues: bool = typer.Option(
             True,

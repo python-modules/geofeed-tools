@@ -80,9 +80,7 @@ def test_cli_query_single_arg_uses_source_as_query(monkeypatch) -> None:
     """`query <ip>` (one arg) discovers via RDAP and queries the same IP."""
     monkeypatch.setattr(
         "geofeed_tools.core.resolve_geofeed_lookup",
-        lambda query, *, rdap_method="rdap.org": _resolved_with_url(
-            query, "https://example.com/geofeed.csv"
-        ),
+        lambda query, *, rdap_method="rdap.org": _resolved_with_url(query, "https://example.com/geofeed.csv"),
     )
     monkeypatch.setattr(
         "geofeed_tools.core.load_input",
