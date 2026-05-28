@@ -1,6 +1,6 @@
 # geofeed-tools Changelog
 
-## PENDING - 0.2.0
+## 2026-05-28 - 0.2.0
 
 Major changes:
 
