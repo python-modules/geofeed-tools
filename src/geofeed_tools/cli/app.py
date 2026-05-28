@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from enum import StrEnum
 from pathlib import Path
 
 from geofeed_tools import GeoFeed, GeoFeedDiscoveryError
-from geofeed_tools.doctor import render_doctor_text
-from geofeed_tools.io_utils import doctor_to_json, report_to_json
+from geofeed_tools.cli.render import (
+    ALL_FORMATS,
+    FORMAT_GREP,
+    FORMAT_JSON,
+    FORMAT_PLAIN,
+    FORMAT_RICH,
+    render_doctor,
+    render_hook,
+    render_info,
+    render_query,
+    render_records,
+    render_validation,
+)
+from geofeed_tools.io_utils import doctor_to_json
 from geofeed_tools.logging import configure_cli_structlog
-from geofeed_tools.models import DoctorResult, GeofeedRecord, ValidationReport
+from geofeed_tools.models import DoctorResult, QueryResult, ValidationReport
 from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
-from geofeed_tools.validate import render_validation_text
 
-_CLI_EXTRAS = ("typer", "structlog", "tabulate")
+_CLI_EXTRAS = ("typer", "structlog", "rich")
 _MISSING_CLI_DEPS: list[str] = []
 for _dep in _CLI_EXTRAS:
     try:
@@ -39,18 +49,34 @@ def _check_cli_deps() -> None:
         sys.exit(1)
 
 
-JSON_HELP = "Emit JSON report"
 VERBOSE_HELP = "Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
+FORMAT_HELP = "Output format: " + ", ".join(ALL_FORMATS) + " (default: rich)"
+
+
+class OutputFormat(StrEnum):
+    """Supported CLI output formats; default is RICH for every command."""
+
+    RICH = FORMAT_RICH
+    PLAIN = FORMAT_PLAIN
+    GREP = FORMAT_GREP
+    JSON = FORMAT_JSON
+
+
+class RdapMethod(StrEnum):
+    """Supported RDAP lookup methods for doctor."""
+
+    RDAP_ORG = RDAP_ORG_METHOD
+    IANA_BOOTSTRAP = IANA_BOOTSTRAP_METHOD
 
 
 def _verbose_option(typer):
-    """Shared --verbose/-v option, repeated across every command."""
+    """Shared --verbose/-v option."""
     return typer.Option(0, "-v", "--verbose", count=True, help=VERBOSE_HELP)
 
 
-def _json_option(typer):
-    """Shared --json option for commands that emit JSON."""
-    return typer.Option(False, "--json", help=JSON_HELP)
+def _format_option(typer):
+    """Shared --format/-f option for output mode selection."""
+    return typer.Option(OutputFormat.RICH, "--format", "-f", help=FORMAT_HELP)
 
 
 def _all_option(typer):
@@ -76,21 +102,6 @@ def _rdap_method_option(typer):
     )
 
 
-class DumpFormat(StrEnum):
-    """Supported output formats for the dump command."""
-
-    JSON = "json"
-    CSV = "csv"
-    TABLE = "table"
-
-
-class RdapMethod(StrEnum):
-    """Supported RDAP lookup methods for doctor."""
-
-    RDAP_ORG = RDAP_ORG_METHOD
-    IANA_BOOTSTRAP = IANA_BOOTSTRAP_METHOD
-
-
 def build_app():
     """Build and return the Typer application."""
     import typer as _typer
@@ -107,71 +118,13 @@ def build_app():
     return app
 
 
-def _render_dump_table(
-    records: list[GeofeedRecord],
-    *,
-    include_validation: bool,
-) -> str:
-    from tabulate import tabulate
-
-    headers = ["Prefix", "Country", "Region", "City", "Postal code"]
-    rows: list[list[str]] = []
-
-    for record in records:
-        row = [
-            record.prefix,
-            record.country,
-            record.region,
-            record.city,
-            record.postal_code,
-        ]
-        if include_validation:
-            row.extend(
-                [
-                    "true" if record.valid else "false",
-                    "; ".join(record.validation_messages),
-                ]
-            )
-        rows.append(row)
-
-    if include_validation:
-        headers.extend(["Valid", "Validation messages"])
-    return tabulate(rows, headers=headers, tablefmt="github")
-
-
-def _emit_query_payload(
-    payload: str,
-    *,
-    output: str,
-    query: str,
-    empty_source: str,
-    fail_on_empty_json: bool,
-    typer,
-) -> None:
-    if output == "csv":
-        if not payload.strip():
-            print(f"no match for {query} in {empty_source}", file=sys.stderr)
-            raise typer.Exit(code=1)
-        print(payload, end="")
-        return
-
-    print(payload)
-    if fail_on_empty_json and not json.loads(payload)["matches"]:
-        raise typer.Exit(code=1)
-
-
 def _register_dump_command(app, typer) -> None:
     """Register the dump command."""
 
     @app.command("dump")
     def dump_command(
         source: str,
-        output_format: DumpFormat = typer.Option(
-            DumpFormat.JSON,
-            "--format",
-            "-f",
-            help="Output format: json (default), csv, or table",
-        ),
+        output_format: OutputFormat = _format_option(typer),
         normalize_first: bool = typer.Option(
             False,
             "--normalize",
@@ -180,47 +133,27 @@ def _register_dump_command(app, typer) -> None:
         no_validation: bool = typer.Option(
             False,
             "--no-validation",
-            help="Skip per-record validation annotations in JSON or table output",
+            help="Skip per-record validation annotations in rich/plain/json output",
         ),
         verbose: int = _verbose_option(typer),
     ) -> None:
-        """Dump geofeed records as JSON, geofeed CSV, or a table."""
+        """Dump geofeed records in the chosen format."""
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
         include_validation = not no_validation
 
-        if output_format is DumpFormat.TABLE:
-            records = geofeed.parse(
-                output="objects",
-                normalize=normalize_first,
-                include_validation=include_validation,
-            )
-            assert isinstance(records, list)
-            print(
-                _render_dump_table(
-                    records,
-                    include_validation=include_validation,
-                )
-            )
-            return
-
-        if output_format is DumpFormat.CSV:
-            payload = geofeed.parse(
-                output="csv",
-                normalize=normalize_first,
-                include_validation=False,
-            )
-            assert isinstance(payload, str)
-            print(payload, end="")
-            return
-
-        payload = geofeed.parse(
-            output="json",
+        records = geofeed.parse(
+            output="objects",
             normalize=normalize_first,
             include_validation=include_validation,
         )
-        assert isinstance(payload, str)
-        print(payload)
+        assert isinstance(records, list)
+        render_records(
+            records,
+            format=output_format.value,
+            title=f"Records ({len(records)})",
+            include_validation=include_validation,
+        )
 
 
 def _register_validate_command(app, typer) -> None:
@@ -229,7 +162,7 @@ def _register_validate_command(app, typer) -> None:
     @app.command("validate")
     def validate_command(
         source: str,
-        json_output: bool = _json_option(typer),
+        output_format: OutputFormat = _format_option(typer),
         strict: bool = typer.Option(
             False,
             "--strict",
@@ -255,17 +188,15 @@ def _register_validate_command(app, typer) -> None:
         """Validate a geofeed source and report issues."""
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
-        validate_options = {
-            "check_sort": not no_sort_check,
-            "check_content_type": not no_content_type_check,
-            "check_aggregation": check_aggregation,
-        }
-
-        report = geofeed.validate(output="objects", **validate_options)
+        report = geofeed.validate(
+            check_sort=not no_sort_check,
+            check_content_type=not no_content_type_check,
+            check_aggregation=check_aggregation,
+            output="objects",
+        )
         assert isinstance(report, ValidationReport)
 
-        payload = report_to_json(report) if json_output else render_validation_text(report)
-        print(payload)
+        render_validation(report, format=output_format.value)
 
         if report.errors > 0 or (strict and report.warnings > 0):
             raise typer.Exit(code=1)
@@ -277,11 +208,12 @@ def _register_normalize_command(app, typer) -> None:
     @app.command("normalize")
     def normalize_command(
         source: str,
+        output_format: OutputFormat = _format_option(typer),
         output_file: str | None = typer.Option(
             None,
             "--output",
             "-o",
-            help="Write normalized CSV to file",
+            help="Write canonical CSV to a file (forces --format grep)",
         ),
         no_uppercase: bool = typer.Option(False, "--no-uppercase"),
         no_sort: bool = typer.Option(False, "--no-sort"),
@@ -290,23 +222,38 @@ def _register_normalize_command(app, typer) -> None:
         no_host_bit_fix: bool = typer.Option(False, "--no-host-bit-fix"),
         verbose: int = _verbose_option(typer),
     ) -> None:
-        """Normalize geofeed records and print or write canonical CSV."""
+        """Normalize geofeed records and emit them in the chosen format."""
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
-        csv_payload = geofeed.normalize(
+
+        if output_file:
+            csv_payload = geofeed.normalize(
+                uppercase=not no_uppercase,
+                sort=not no_sort,
+                aggregate=not no_aggregate,
+                dedupe=not no_dedupe,
+                fix_host_bits=not no_host_bit_fix,
+                output="csv",
+            )
+            assert isinstance(csv_payload, str)
+            Path(output_file).write_text(csv_payload, encoding="utf-8")
+            return
+
+        records = geofeed.normalize(
             uppercase=not no_uppercase,
             sort=not no_sort,
             aggregate=not no_aggregate,
             dedupe=not no_dedupe,
             fix_host_bits=not no_host_bit_fix,
-            output="csv",
+            output="objects",
         )
-        assert isinstance(csv_payload, str)
-
-        if output_file:
-            Path(output_file).write_text(csv_payload, encoding="utf-8")
-            return
-        print(csv_payload, end="")
+        assert isinstance(records, list)
+        render_records(
+            records,
+            format=output_format.value,
+            title=f"Normalized records ({len(records)})",
+            include_validation=False,
+        )
 
 
 def _register_query_command(app, typer) -> None:
@@ -316,31 +263,28 @@ def _register_query_command(app, typer) -> None:
     def query_command(
         source: str,
         query: str,
+        output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
-        json_output: bool = _json_option(typer),
         verbose: int = _verbose_option(typer),
     ) -> None:
         """Query a geofeed by IP or prefix."""
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source, cache_query_index=False)
-
-        output = "json" if json_output else "csv"
-        payload = geofeed.query(
+        result = geofeed.query(
             query,
             return_all=show_all,
             include_longer=include_longer,
-            output=output,
+            output="objects",
         )
-        assert isinstance(payload, str)
-        _emit_query_payload(
-            payload,
-            output=output,
-            query=query,
-            empty_source=source,
-            fail_on_empty_json=False,
-            typer=typer,
-        )
+        assert isinstance(result, QueryResult)
+        render_query(result, format=output_format.value, source_label="Query")
+
+        if output_format is OutputFormat.JSON:
+            # JSON conveys empty matches as data — no exit code change.
+            return
+        if not result.matches:
+            raise typer.Exit(code=1)
 
 
 def _register_doctor_command(app, typer) -> None:
@@ -349,10 +293,10 @@ def _register_doctor_command(app, typer) -> None:
     @app.command("doctor")
     def doctor_command(
         query: str,
+        output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
         rdap_method: RdapMethod = _rdap_method_option(typer),
-        json_output: bool = _json_option(typer),
         verbose: int = _verbose_option(typer),
     ) -> None:
         """Discover and query a published geofeed by IP or prefix."""
@@ -365,9 +309,7 @@ def _register_doctor_command(app, typer) -> None:
             output="objects",
         )
         assert isinstance(result, DoctorResult)
-
-        payload = doctor_to_json(result) if json_output else render_doctor_text(result)
-        print(payload)
+        render_doctor(result, format=output_format.value)
 
         if result.lookup.geofeed_url is None or not result.matches:
             raise typer.Exit(code=1)
@@ -379,35 +321,54 @@ def _register_lookup_command(app, typer) -> None:
     @app.command("lookup")
     def lookup_command(
         query: str,
+        output_format: OutputFormat = _format_option(typer),
         show_all: bool = _all_option(typer),
         include_longer: bool = _longer_option(typer),
         rdap_method: RdapMethod = _rdap_method_option(typer),
-        json_output: bool = _json_option(typer),
         verbose: int = _verbose_option(typer),
     ) -> None:
         """Discover a published geofeed via RDAP and query it by IP or prefix."""
         configure_cli_structlog(verbose)
-        output = "json" if json_output else "csv"
         try:
-            payload = GeoFeed.lookup(
+            result = GeoFeed.lookup(
                 query,
                 return_all=show_all,
                 include_longer=include_longer,
                 rdap_method=rdap_method,
-                output=output,
+                output="objects",
             )
         except GeoFeedDiscoveryError as exc:
-            print(str(exc), file=sys.stderr)
+            _emit_discovery_error(exc, output_format)
             raise typer.Exit(code=1) from exc
-        assert isinstance(payload, str)
-        _emit_query_payload(
-            payload,
-            output=output,
-            query=query,
-            empty_source="discovered geofeed",
-            fail_on_empty_json=True,
-            typer=typer,
-        )
+
+        assert isinstance(result, QueryResult)
+        render_query(result, format=output_format.value, source_label="Lookup")
+
+        # lookup always exits 1 when no records were matched, including JSON
+        # mode (the discovery half of the workflow is the point of the command).
+        if not result.matches:
+            raise typer.Exit(code=1)
+
+
+def _emit_discovery_error(exc: GeoFeedDiscoveryError, output_format: OutputFormat) -> None:
+    """Emit a discovery-failure message in a format-appropriate way."""
+    if output_format is OutputFormat.JSON:
+        from geofeed_tools.io_utils import query_to_json
+
+        # Synthesise an empty QueryResult so the JSON shape is stable.
+        empty = QueryResult(query=exc.query, matches=())
+        print(query_to_json(empty))
+        return
+    if output_format is OutputFormat.GREP:
+        # grep mode is silent on failure; the caller reads the exit code.
+        return
+    if output_format is OutputFormat.PLAIN:
+        print(str(exc), file=sys.stderr)
+        return
+    from rich.console import Console
+    from rich.text import Text
+
+    Console(stderr=True).print(Text(str(exc), style="bold yellow"))
 
 
 def _register_info_command(app, typer) -> None:
@@ -416,59 +377,15 @@ def _register_info_command(app, typer) -> None:
     @app.command("info")
     def info_command(
         source: str,
-        json_output: bool = _json_option(typer),
+        output_format: OutputFormat = _format_option(typer),
         verbose: int = _verbose_option(typer),
     ) -> None:
         """Show geofeed statistics."""
-        from tabulate import tabulate
-
         configure_cli_structlog(verbose)
         geofeed = GeoFeed(source)
-        output = "json" if json_output else "objects"
-        info = geofeed.info(output=output)
-
-        if isinstance(info, str):
-            print(info)
-            return
-
-        print(f"Source: {info.source}\n")
-
-        record_rows: list[list[object]] = [
-            ["Total records", info.total_records],
-            ["Unique prefixes", info.unique_prefixes],
-            ["IPv4 records", info.ipv4_records],
-            ["IPv6 records", info.ipv6_records],
-            ["Duplicates", info.duplicates],
-        ]
-        print(tabulate(record_rows, headers=["Records", ""], tablefmt="github"))
-
-        geo_rows: list[list[object]] = [
-            ["Countries", info.unique_countries],
-            ["Regions", info.unique_regions],
-            ["Cities", info.unique_cities],
-            ["Postal codes", info.unique_postal_codes],
-        ]
-        print()
-        print(
-            tabulate(
-                geo_rows,
-                headers=["Geographic coverage", "Unique"],
-                tablefmt="github",
-            )
-        )
-
-        validation_rows: list[list[object]] = [
-            ["Errors", info.errors],
-            ["Warnings", info.warnings],
-        ]
-        print()
-        print(
-            tabulate(
-                validation_rows,
-                headers=["Validation", ""],
-                tablefmt="github",
-            )
-        )
+        info = geofeed.info(output="objects")
+        assert not isinstance(info, str)
+        render_info(info, format=output_format.value)
 
 
 def _register_hook_command(app, typer) -> None:
@@ -477,6 +394,7 @@ def _register_hook_command(app, typer) -> None:
     @app.command("hook")
     def hook_command(
         source: str,
+        output_format: OutputFormat = _format_option(typer),
         strict: bool = typer.Option(
             False,
             "--strict",
@@ -495,21 +413,15 @@ def _register_hook_command(app, typer) -> None:
         report = geofeed.validate(output="objects")
         assert isinstance(report, ValidationReport)
 
-        if show_issues:
-            for issue in report.issues:
-                typer.echo(issue.format(), err=True)
-                if issue.raw_line is not None:
-                    typer.echo(f"  > {issue.raw_line}", err=True)
-
-        failed = report.errors > 0 or (strict and report.warnings > 0)
-        if failed:
-            msg = f"hook: FAIL — {report.errors} error(s), {report.warnings} warning(s) in {source}"
-            typer.echo(msg, err=True)
-            raise typer.Exit(code=1)
-        typer.echo(
-            f"hook: OK — {report.records} record(s), {report.warnings} warning(s) in {source}",
-            err=True,
+        failed = render_hook(
+            report,
+            source,
+            format=output_format.value,
+            show_issues=show_issues,
+            strict=strict,
         )
+        if failed:
+            raise typer.Exit(code=1)
 
 
 def main() -> None:
@@ -517,3 +429,7 @@ def main() -> None:
     _check_cli_deps()
     app = build_app()
     app()
+
+
+# Re-exported for `from geofeed_tools.cli.app import doctor_to_json` if needed.
+__all__ = ["OutputFormat", "build_app", "doctor_to_json", "main"]

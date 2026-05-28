@@ -44,7 +44,7 @@ def test_validate_json_runs_single_validation_pass(monkeypatch) -> None:
 
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed.validate", fake_validate)
 
-    result = runner.invoke(build_app(), ["validate", fixture_path("valid_geofeed.csv"), "--json"])
+    result = runner.invoke(build_app(), ["validate", fixture_path("valid_geofeed.csv"), "--format", "json"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)

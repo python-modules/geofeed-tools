@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from typer.testing import CliRunner
 
 from geofeed_tools import GeoFeedDiscoveryError, GeofeedRecord, QueryResult
 from geofeed_tools.cli.app import build_app
-from geofeed_tools.io_utils import query_to_json, records_to_csv
 
 runner = CliRunner()
 
@@ -28,16 +29,13 @@ def _make_fake_geofeed(result: QueryResult | GeoFeedDiscoveryError):
             include_longer: bool = False,
             rdap_method: str = "rdap.org",
             output: str = "objects",
-        ) -> str:
-            del return_all, include_longer, rdap_method
+        ) -> QueryResult:
+            del query, return_all, include_longer, rdap_method
             if isinstance(result, GeoFeedDiscoveryError):
                 raise result
-            if output == "json":
-                return query_to_json(result)
-            assert output == "csv"
-            return records_to_csv(result.matches, include_validation=False)
+            assert output == "objects"
+            return result
 
-        # keep doctor available so other commands still work
         @staticmethod
         def doctor(*args, **kwargs):  # pragma: no cover
             raise NotImplementedError
@@ -45,28 +43,39 @@ def _make_fake_geofeed(result: QueryResult | GeoFeedDiscoveryError):
     return FakeGeoFeed
 
 
-def test_cli_lookup_emits_csv_by_default(monkeypatch) -> None:
-    """Lookup should print CSV of matches when a geofeed and match are found."""
+def test_cli_lookup_default_rich(monkeypatch) -> None:
+    """Lookup should default to rich output containing the matching prefix."""
     qr = QueryResult(query="203.0.113.1", matches=(_SAMPLE_RECORD,))
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
-    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1"])
+    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1"], env={"COLUMNS": "200"})
 
     assert outcome.exit_code == 0
     assert "203.0.113.0/24" in outcome.stdout
-    assert "US" in outcome.stdout
 
 
-def test_cli_lookup_emits_json(monkeypatch) -> None:
-    """Lookup --json should emit a QueryResult-shaped JSON payload."""
+def test_cli_lookup_grep_format(monkeypatch) -> None:
+    """Lookup --format grep should emit just the CSV row."""
     qr = QueryResult(query="203.0.113.1", matches=(_SAMPLE_RECORD,))
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
-    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1", "--json"])
+    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1", "--format", "grep"])
 
     assert outcome.exit_code == 0
-    assert '"query": "203.0.113.1"' in outcome.stdout
-    assert '"prefix": "203.0.113.0/24"' in outcome.stdout
+    assert outcome.stdout.strip() == "203.0.113.0/24,US,US-CA,Los Angeles,"
+
+
+def test_cli_lookup_emits_json(monkeypatch) -> None:
+    """Lookup --format json should emit a QueryResult-shaped JSON payload."""
+    qr = QueryResult(query="203.0.113.1", matches=(_SAMPLE_RECORD,))
+    monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
+
+    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1", "--format", "json"])
+
+    assert outcome.exit_code == 0
+    payload = json.loads(outcome.stdout)
+    assert payload["query"] == "203.0.113.1"
+    assert payload["matches"][0]["prefix"] == "203.0.113.0/24"
     # lookup JSON must NOT include RDAP metadata (unlike doctor)
     assert "geofeed_url" not in outcome.stdout
     assert "lookup_strategy" not in outcome.stdout
@@ -93,15 +102,14 @@ def test_cli_lookup_exits_nonzero_when_no_matches(monkeypatch) -> None:
     outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1"])
 
     assert outcome.exit_code == 1
-    assert "no match" in outcome.output
 
 
 def test_cli_lookup_exits_nonzero_when_no_matches_json(monkeypatch) -> None:
-    """Lookup --json should still exit 1 when no matches are found."""
+    """Lookup --format json should still exit 1 when no matches are found."""
     qr = QueryResult(query="203.0.113.1", matches=())
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", _make_fake_geofeed(qr))
 
-    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1", "--json"])
+    outcome = runner.invoke(build_app(), ["lookup", "203.0.113.1", "--format", "json"])
 
     assert outcome.exit_code == 1
     assert '"matches": []' in outcome.stdout
@@ -120,18 +128,18 @@ def test_cli_lookup_accepts_rdap_method_override(monkeypatch) -> None:
             include_longer: bool = False,
             rdap_method: str = "rdap.org",
             output: str = "objects",
-        ) -> str:
+        ) -> QueryResult:
             del return_all, include_longer
             captured["rdap_method"] = rdap_method
-            if output == "json":
-                return query_to_json(QueryResult(query=query, matches=(_SAMPLE_RECORD,)))
-            return records_to_csv((_SAMPLE_RECORD,), include_validation=False)
+            assert output == "objects"
+            return QueryResult(query=query, matches=(_SAMPLE_RECORD,))
 
     monkeypatch.setattr("geofeed_tools.cli.app.GeoFeed", CapturingFakeGeoFeed)
 
     outcome = runner.invoke(
         build_app(),
         ["lookup", "203.0.113.1", "--rdap-method", "iana-bootstrap"],
+        env={"COLUMNS": "200"},
     )
 
     assert outcome.exit_code == 0
