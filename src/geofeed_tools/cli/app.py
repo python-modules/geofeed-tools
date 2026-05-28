@@ -22,8 +22,8 @@ from geofeed_tools.cli.render import (
 )
 from geofeed_tools.info import DEFAULT_TOP_N
 from geofeed_tools.io_utils import doctor_to_json
-from geofeed_tools.loader import is_ip_or_prefix
-from geofeed_tools.logging import configure_cli_structlog
+from geofeed_tools.loader import is_ip_or_prefix, source_kind
+from geofeed_tools.logging import configure_cli_structlog, logger
 from geofeed_tools.models import DoctorResult, GeoFeedInfo, QueryResult, ValidationReport
 from geofeed_tools.rdap import IANA_BOOTSTRAP_METHOD, RDAP_ORG_METHOD
 
@@ -144,15 +144,30 @@ def _load_geofeed(source: str, output_format: OutputFormat, typer, **kwargs) -> 
     IP/prefix). When the IP/prefix discovery cannot find a published geofeed,
     emits a format-appropriate error and exits 1 instead of dumping a traceback.
     """
+    logger.debug(
+        "Loading geofeed: source=%s kind=%s options=%s",
+        source,
+        source_kind(source),
+        kwargs,
+    )
     try:
         return GeoFeed(source, **kwargs)
     except GeoFeedDiscoveryError as exc:
+        logger.info(
+            "Aborting CLI command: no published geofeed could be discovered for %s",
+            exc.query,
+        )
         _emit_source_discovery_error(exc, output_format)
         raise typer.Exit(code=1) from exc
 
 
 def _emit_source_discovery_error(exc: GeoFeedDiscoveryError, output_format: OutputFormat) -> None:
     """Emit a discovery-failure message when an IP/prefix source can't be resolved."""
+    logger.debug(
+        "Emitting RDAP discovery failure to CLI: query=%s output_format=%s",
+        exc.query,
+        output_format.value,
+    )
     if output_format is OutputFormat.JSON:
         import json
 
@@ -444,10 +459,26 @@ def _register_query_command(app, typer) -> None:
         configure_cli_structlog(verbose)
         if query is None:
             if not is_ip_or_prefix(source):
+                logger.debug(
+                    "Rejecting query invocation: no QUERY provided and SOURCE %r is not an IP/prefix",
+                    source,
+                )
                 raise typer.BadParameter(
                     "QUERY is required unless SOURCE is an IP address or CIDR prefix",
                 )
+            logger.info(
+                "No QUERY provided; reusing SOURCE %r as the lookup target (IP/prefix source)",
+                source,
+            )
             query = source
+        else:
+            logger.debug(
+                "Running query against geofeed: source=%s query=%s show_all=%s include_longer=%s",
+                source,
+                query,
+                show_all,
+                include_longer,
+            )
         geofeed = _load_geofeed(
             source,
             output_format,

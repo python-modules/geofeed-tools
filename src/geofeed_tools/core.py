@@ -308,6 +308,11 @@ class _GeoFeedBase:
     def _apply_resolved_lookup(self, lookup: DoctorLookup) -> str:
         """Promote an RDAP-resolved geofeed URL into ``source`` and return it."""
         if lookup.geofeed_url is None:
+            logger.info(
+                "RDAP discovery returned no geofeed URL for %s (method=%s); raising GeoFeedDiscoveryError",
+                self.original_source,
+                self._rdap_method,
+            )
             raise GeoFeedDiscoveryError(self.original_source)
         self.discovery = lookup
         self.source = lookup.geofeed_url
@@ -317,14 +322,38 @@ class _GeoFeedBase:
             self._rdap_method,
             lookup.geofeed_url,
         )
+        logger.debug(
+            "RDAP discovery metadata: discovered_via=%s referring_handle=%s referring_range=%s resolved_urls=%s",
+            lookup.geofeed_discovered_via,
+            lookup.referring_handle,
+            lookup.referring_range,
+            lookup.resolved_urls,
+        )
         return lookup.geofeed_url
 
     def _maybe_resolve_source_sync(self) -> None:
         """Discover the geofeed URL via RDAP when ``source`` is an IP/prefix."""
         if self.discovery is not None:
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping RDAP discovery: source %s was already resolved to %s",
+                self.original_source,
+                self.source,
+            )
             return
         if not is_ip_or_prefix(self.source):
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping RDAP discovery: source %s is a %s, not an IP/prefix",
+                self.source,
+                source_kind(self.source),
+            )
             return
+        logger.info(
+            "Source %s is an IP/prefix; running RDAP geofeed discovery (method=%s)",
+            self.source,
+            self._rdap_method,
+        )
         resolved = resolve_geofeed_lookup(self.source, rdap_method=self._rdap_method)
         self._apply_resolved_lookup(resolved.lookup)
 
@@ -350,7 +379,14 @@ class _GeoFeedBase:
         assert self.text is not None
         cached = self._parsed_state.get_cached()
         if cached is not None:
+            logger.log(
+                TRACE_LEVEL,
+                "Reusing cached parsed records for %s: records=%d",
+                self.source,
+                len(cached[0]),
+            )
             return cached
+        logger.debug("Parsing geofeed text for the first time after load: source=%s", self.source)
         return self._parsed_state.store(parse_text_with_networks(self.text))
 
     # ------------------------------------------------------------------

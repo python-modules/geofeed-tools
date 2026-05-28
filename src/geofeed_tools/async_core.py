@@ -59,9 +59,26 @@ class AsyncGeoFeed(_GeoFeedBase):
     async def _maybe_resolve_source_async(self) -> None:
         """Discover the geofeed URL asynchronously when source is an IP/prefix."""
         if self.discovery is not None:
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping async RDAP discovery: source %s was already resolved to %s",
+                self.original_source,
+                self.source,
+            )
             return
         if not is_ip_or_prefix(self.source):
+            logger.log(
+                TRACE_LEVEL,
+                "Skipping async RDAP discovery: source %s is a %s, not an IP/prefix",
+                self.source,
+                source_kind(self.source),
+            )
             return
+        logger.info(
+            "Source %s is an IP/prefix; running async RDAP geofeed discovery (method=%s)",
+            self.source,
+            self._rdap_method,
+        )
         resolved = await resolve_geofeed_lookup_async(
             self.source,
             rdap_method=self._rdap_method,

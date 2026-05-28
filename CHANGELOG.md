@@ -20,6 +20,7 @@ Other changes:
 - Default to showing help message without args/command provided
 - Fix caching across subsequent method calls
 - Split renderer for readability
+- Add more logging/debugging messages
 
 ## 2026-05-26 - 0.1.2
 
