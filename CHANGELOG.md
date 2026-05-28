@@ -4,6 +4,10 @@
 
 - Misc small fixups
 - Refactor things to reduce complexity
+- Drop CLI requirement for tabulate and use rich for formatting (already pulled in from tabulate)
+- Pretty format CLI output by default with colours and better messages
+- Add "--format" flag for CLI commands to choose between rich/plain/grep/json
+- Update info command to provide actual useful information and statistics
 
 ## 2026-05-26 - 0.1.2
 
