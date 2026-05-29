@@ -1,5 +1,7 @@
 # geofeed-tools Changelog
 
+## TBD - 0.2.1
+
 ## 2026-05-28 - 0.2.0
 
 Major changes:
